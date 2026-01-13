@@ -4,13 +4,53 @@
 #include <stdlib.h>
 
 sqlite3 *db;
-GtkWidget *main_listbox; // On garde la liste en variable globale pour pouvoir la rafraîchir
+GtkWidget *main_listbox;
 
-// --- FONCTIONS DE BASE DE DONNÉES ---
+// --- FONCTIONS SQL ---
 
-// Fonction pour vider la liste actuelle et la re-remplir depuis la BDD
+// Fonction pour supprimer une musique
+void supprimer_chanson_bdd(int id) {
+    char sql[256];
+    snprintf(sql, sizeof(sql), "DELETE FROM chansons WHERE id = %d;", id);
+   
+    char *errMsg = 0;
+    int rc = sqlite3_exec(db, sql, 0, 0, &errMsg);
+   
+    if (rc != SQLITE_OK) {
+        g_print("Erreur suppression : %s\n", errMsg);
+        sqlite3_free(errMsg);
+    } else {
+        g_print("Chanson ID %d supprimée.\n", id);
+    }
+}
+
+// Fonction pour insérer
+void ajouter_chanson_bdd(const char *t, const char *a, const char *an) {
+    char sql[512];
+    snprintf(sql, sizeof(sql), "INSERT INTO chansons (titre, artiste, annee) VALUES ('%s', '%s', %s);", t, a, an);
+    sqlite3_exec(db, sql, 0, 0, 0);
+}
+
+// --- INTERFACE ---
+
+// Callback du bouton suppression
+static void on_delete_clicked(GtkWidget *btn, gpointer data) {
+    // On récupère l'ID caché dans le bouton
+    int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "id_chanson"));
+   
+    // 1. On supprime dans la BDD
+    supprimer_chanson_bdd(id);
+   
+    // 2. On supprime visuellement la ligne (le parent du bouton est la box, le parent de la box est la ligne)
+    GtkWidget *box = gtk_widget_get_parent(btn);
+    GtkWidget *row = gtk_widget_get_parent(box); // La ligne de la ListBox
+   
+    // Astuce GTK4 : On demande à la liste de retirer cette ligne spécifique
+    gtk_list_box_remove(GTK_LIST_BOX(main_listbox), row);
+}
+
 void rafraichir_liste() {
-    // 1. On vide la liste actuelle (on supprime tous les enfants)
+    // Vider la liste
     GtkWidget *child = gtk_widget_get_first_child(main_listbox);
     while (child != NULL) {
         GtkWidget *next = gtk_widget_get_next_sibling(child);
@@ -18,174 +58,132 @@ void rafraichir_liste() {
         child = next;
     }
 
-    // 2. On relit la BDD
-    const char *sql = "SELECT titre, artiste, annee FROM chansons ORDER BY id DESC"; // Les plus récents en haut
+    // Remplir la liste
+    const char *sql = "SELECT id, titre, artiste, annee FROM chansons ORDER BY id DESC";
     sqlite3_stmt *stmt;
     sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        const char *titre = (const char *)sqlite3_column_text(stmt, 0);
-        const char *artiste = (const char *)sqlite3_column_text(stmt, 1);
-        int annee = sqlite3_column_int(stmt, 2);
+        int id = sqlite3_column_int(stmt, 0);
+        const char *titre = (const char *)sqlite3_column_text(stmt, 1);
+        const char *artiste = (const char *)sqlite3_column_text(stmt, 2);
+        int annee = sqlite3_column_int(stmt, 3);
         char annee_str[10];
         sprintf(annee_str, "%d", annee);
 
-        // Création de la ligne visuelle
-        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+        // Conteneur horizontal
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+       
+        // Textes
         GtkWidget *lbl_titre = gtk_label_new(titre);
-        GtkWidget *lbl_artiste = gtk_label_new(artiste);
-        GtkWidget *lbl_annee = gtk_label_new(annee_str);
+        GtkWidget *lbl_infos = gtk_label_new(NULL);
+        char infos[256];
+        snprintf(infos, sizeof(infos), "<span color='gray'>%s (%s)</span>", artiste, annee_str);
+        gtk_label_set_markup(GTK_LABEL(lbl_infos), infos);
 
-        // Mise en forme
+        // Bouton Supprimer (Rouge)
+        GtkWidget *btn_del = gtk_button_new_with_label("X");
+        gtk_widget_add_css_class(btn_del, "destructive-action"); // Style rouge standard GTK
+       
+        // *** MAGIE : On colle l'ID sur le bouton pour plus tard ***
+        g_object_set_data(G_OBJECT(btn_del), "id_chanson", GINT_TO_POINTER(id));
+        g_signal_connect(btn_del, "clicked", G_CALLBACK(on_delete_clicked), NULL);
+
+        // Mise en page
         gtk_widget_set_hexpand(lbl_titre, TRUE);
         gtk_widget_set_halign(lbl_titre, GTK_ALIGN_START);
-        gtk_label_set_markup(GTK_LABEL(lbl_titre), "<b>"); // Gras pour le titre (début)
+        gtk_label_set_markup(GTK_LABEL(lbl_titre), titre);
+       
+        // On rend le titre gras
         char markup[256];
         snprintf(markup, sizeof(markup), "<b>%s</b>", titre);
         gtk_label_set_markup(GTK_LABEL(lbl_titre), markup);
 
         gtk_box_append(GTK_BOX(box), lbl_titre);
-        gtk_box_append(GTK_BOX(box), lbl_artiste);
-        gtk_box_append(GTK_BOX(box), lbl_annee);
+        gtk_box_append(GTK_BOX(box), lbl_infos);
+        gtk_box_append(GTK_BOX(box), btn_del);
 
         gtk_list_box_append(GTK_LIST_BOX(main_listbox), box);
     }
     sqlite3_finalize(stmt);
 }
 
-// Fonction pour insérer dans la BDD
-void ajouter_chanson_bdd(const char *t, const char *a, const char *an) {
-    char sql[512];
-    // Attention : ceci est une méthode simple, pour un vrai projet pro on utiliserait des "prepared statements" pour la sécurité
-    snprintf(sql, sizeof(sql), "INSERT INTO chansons (titre, artiste, annee) VALUES ('%s', '%s', %s);", t, a, an);
+// --- RESTE DU CODE (Ajout, Main...) inchangé ou presque ---
 
-    char *errMsg = 0;
-    int rc = sqlite3_exec(db, sql, 0, 0, &errMsg);
-
-    if (rc != SQLITE_OK) {
-        g_print("Erreur SQL: %s\n", errMsg);
-        sqlite3_free(errMsg);
-    } else {
-        g_print("Chanson ajoutée !\n");
-        rafraichir_liste(); // On met à jour l'affichage direct !
-    }
-}
-
-// --- INTERFACE GRAPHIQUE ---
-
-// Bouton "Enregistrer" dans la fenêtre d'ajout
 static void on_save_clicked(GtkWidget *widget, gpointer data) {
-    // On récupère les 3 champs de texte (passés dans un tableau)
     GtkWidget **entries = (GtkWidget **)data;
-    GtkEditable *entry_titre = GTK_EDITABLE(entries[0]);
-    GtkEditable *entry_artiste = GTK_EDITABLE(entries[1]);
-    GtkEditable *entry_annee = GTK_EDITABLE(entries[2]);
+    const char *titre = gtk_editable_get_text(GTK_EDITABLE(entries[0]));
+    const char *artiste = gtk_editable_get_text(GTK_EDITABLE(entries[1]));
+    const char *annee = gtk_editable_get_text(GTK_EDITABLE(entries[2]));
 
-    const char *titre = gtk_editable_get_text(entry_titre);
-    const char *artiste = gtk_editable_get_text(entry_artiste);
-    const char *annee = gtk_editable_get_text(entry_annee);
-
-    // On sauvegarde
-    if (g_utf8_strlen(titre, -1) > 0) { // Vérif simple que le titre n'est pas vide
+    if (g_utf8_strlen(titre, -1) > 0) {
         ajouter_chanson_bdd(titre, artiste, annee);
-
-        // On ferme la fenêtre d'ajout (c'est le parent du parent du bouton... un peu tricky mais ça marche)
-        GtkWidget *window = gtk_widget_get_ancestor(widget, GTK_TYPE_WINDOW);
-        gtk_window_close(GTK_WINDOW(window));
+        rafraichir_liste();
+        GtkWidget *win = gtk_widget_get_ancestor(widget, GTK_TYPE_WINDOW);
+        gtk_window_close(GTK_WINDOW(win));
     }
-
-    free(entries); // Nettoyage mémoire
+    free(entries);
 }
 
-// Bouton principal "+"
 static void on_add_clicked(GtkWidget *widget, gpointer data) {
     GtkWidget *dialog = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(dialog), "Ajouter une musique");
-    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE); // Bloque la fenêtre principale tant que celle-ci est ouverte
+    gtk_window_set_title(GTK_WINDOW(dialog), "Ajout");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     gtk_window_set_default_size(GTK_WINDOW(dialog), 300, 200);
 
-    // Organisation verticale
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_widget_set_margin_top(box, 20);
-    gtk_widget_set_margin_bottom(box, 20);
-    gtk_widget_set_margin_start(box, 20);
-    gtk_widget_set_margin_end(box, 20);
+    gtk_widget_set_margin_top(box, 20); gtk_widget_set_margin_bottom(box, 20);
+    gtk_widget_set_margin_start(box, 20); gtk_widget_set_margin_end(box, 20);
     gtk_window_set_child(GTK_WINDOW(dialog), box);
 
-    // Champs de saisie
-    GtkWidget *e_titre = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(e_titre), "Titre");
-
-    GtkWidget *e_artiste = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(e_artiste), "Artiste");
-
-    GtkWidget *e_annee = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(e_annee), "Année");
+    GtkWidget *e_titre = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e_titre), "Titre");
+    GtkWidget *e_artiste = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e_artiste), "Artiste");
+    GtkWidget *e_annee = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(e_annee), "Année");
 
     gtk_box_append(GTK_BOX(box), e_titre);
     gtk_box_append(GTK_BOX(box), e_artiste);
     gtk_box_append(GTK_BOX(box), e_annee);
 
-    // Bouton Valider
-    GtkWidget *btn_save = gtk_button_new_with_label("Enregistrer");
-    gtk_widget_set_margin_top(btn_save, 10);
-    gtk_box_append(GTK_BOX(box), btn_save);
+    GtkWidget *btn = gtk_button_new_with_label("Valider");
+    gtk_box_append(GTK_BOX(box), btn);
 
-    // On prépare les données à envoyer au bouton (les 3 champs)
     GtkWidget **entries = malloc(3 * sizeof(GtkWidget*));
-    entries[0] = e_titre;
-    entries[1] = e_artiste;
-    entries[2] = e_annee;
-
-    g_signal_connect(btn_save, "clicked", G_CALLBACK(on_save_clicked), entries);
+    entries[0] = e_titre; entries[1] = e_artiste; entries[2] = e_annee;
+    g_signal_connect(btn, "clicked", G_CALLBACK(on_save_clicked), entries);
 
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
 static void activate(GtkApplication *app, gpointer user_data) {
-    GtkWidget *window;
-    GtkWidget *scrolled_window;
-    GtkWidget *header;
-    GtkWidget *add_button;
-
-    window = gtk_application_window_new(app);
+    GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Ma Playlist ESIEA");
     gtk_window_set_default_size(GTK_WINDOW(window), 600, 400);
 
-    // Barre de titre personnalisée (HeaderBar)
-    header = gtk_header_bar_new();
+    GtkWidget *header = gtk_header_bar_new();
     gtk_window_set_titlebar(GTK_WINDOW(window), header);
 
-    // Bouton Ajouter
-    add_button = gtk_button_new_with_label("+ Ajouter");
-    g_signal_connect(add_button, "clicked", G_CALLBACK(on_add_clicked), NULL);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), add_button);
+    GtkWidget *btn_add = gtk_button_new_with_label("+ Ajouter");
+    g_signal_connect(btn_add, "clicked", G_CALLBACK(on_add_clicked), NULL);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), btn_add);
 
-    // Connexion BDD
     sqlite3_open("data/musique.db", &db);
 
-    // Liste avec défilement
-    scrolled_window = gtk_scrolled_window_new();
-    gtk_window_set_child(GTK_WINDOW(window), scrolled_window);
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_window_set_child(GTK_WINDOW(window), scroll);
 
     main_listbox = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(main_listbox), GTK_SELECTION_NONE);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window), main_listbox);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), main_listbox);
 
     rafraichir_liste();
-
     gtk_window_present(GTK_WINDOW(window));
 }
 
 int main(int argc, char **argv) {
-    GtkApplication *app;
-    int status;
-
-    app = gtk_application_new("org.esiea.projet", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication *app = gtk_application_new("org.esiea.projet", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
-    status = g_application_run(G_APPLICATION(app), argc, argv);
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
-
     if(db) sqlite3_close(db);
     return status;
 }
