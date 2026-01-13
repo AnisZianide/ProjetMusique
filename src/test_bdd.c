@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
     int rc;
 
     // 1. Ouverture de la base de données "musique.db"
-    rc = sqlite3_open("musique.db", &db);
+    rc = sqlite3_open("data/musique.db", &db);
 
     if(rc) {
         fprintf(stderr, "Impossible d'ouvrir la base: %s\n", sqlite3_errmsg(db));
