@@ -1,22 +1,30 @@
+# Compilateur
 CC = gcc
-CFLAGS = -Wall `pkg-config --cflags gtk4`
-LIBS_GTK = `pkg-config --libs gtk4`
-LIBS_SQL = -lsqlite3
+CFLAGS = -Wall -Wextra -g $(shell pkg-config --cflags gtk4)
 
-# Par défaut, on fabrique TOUT (l'appli et les tests)
-all: app test_bdd test_gui
+# C'est ICI qu'on relie la base de données (-lsqlite3)
+LIBS = $(shell pkg-config --libs gtk4) -lsqlite3
 
-# 1. Ton nouveau programme principal (La fusion)
-app: src/main.c
-	$(CC) src/main.c -o bin/app_musique $(CFLAGS) $(LIBS_GTK) $(LIBS_SQL)
+# Fichiers
+SRC = src/main.c
+TARGET = bin/app_musique
+DATA_DIR = data
 
-# 2. Ton ancien test de base de données (on le garde au cas où)
-test_bdd: src/test_bdd.c
-	$(CC) src/test_bdd.c -o bin/test_bdd $(LIBS_SQL)
+# Règle par défaut
+all: directories $(TARGET)
 
-# 3. Ton ancien test de fenêtre (on le garde aussi)
-test_gui: src/test_gui.c
-	$(CC) src/test_gui.c -o bin/test_gui $(CFLAGS) $(LIBS_GTK)
+# Compilation
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LIBS)
 
+# Création automatique des dossiers bin et data
+directories:
+	@mkdir -p bin
+	@mkdir -p $(DATA_DIR)
+
+# Nettoyage
 clean:
-	rm -f bin/*
+	rm -f $(TARGET)
+	rm -f $(DATA_DIR)/*.db
+
+.PHONY: all clean directories
