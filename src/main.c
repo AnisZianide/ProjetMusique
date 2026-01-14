@@ -3,6 +3,9 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
+// On inclut la librairie de Tags (C Bindings)
+#include <taglib/tag_c.h>
+
 #include <gtk/gtk.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -15,15 +18,13 @@ const char *DB_FILE = "data/musique.db";
 GtkWidget *list_box_catalogue;
 GtkWidget *lbl_status;
 GtkWidget *main_window;
-GtkWidget *btn_play_pause; // On garde une référence pour changer l'icône
+GtkWidget *btn_play_pause;
 
-// --- VARIABLES AUDIO ---
+// --- AUDIO ---
 ma_engine engine;
 ma_sound sound;
-int is_loaded = 0;  // Est-ce qu'un fichier est chargé en mémoire ?
-int is_paused = 0;  // Est-ce qu'on est en pause ?
-
-// NOUVEAU : On retient quelle ligne joue actuellement pour faire Suivant/Précédent
+int is_loaded = 0;
+int is_paused = 0;
 GtkListBoxRow *current_row = NULL;
 
 // --- UTILITAIRES ---
@@ -45,105 +46,58 @@ void set_status(const char *message, int is_error) {
     g_free(markup);
 }
 
-// --- LOGIQUE AUDIO ---
-
-void stop_musique() {
-    if (is_loaded) {
-        ma_sound_stop(&sound);
-        ma_sound_uninit(&sound);
-        is_loaded = 0;
-        is_paused = 0;
-    }
-}
-
-// Fonction pour récupérer le chemin caché dans une ligne
-char* get_chemin_from_row(GtkListBoxRow *row) {
-    if (!row) return NULL;
-    GtkWidget *box_row = gtk_list_box_row_get_child(row);
-    GtkWidget *btn_del = gtk_widget_get_last_child(box_row);
-    return (char *)g_object_get_data(G_OBJECT(btn_del), "mon_chemin");
-}
-
-void jouer_musique(GtkListBoxRow *row) {
-    if (!row) return;
-
-    char *chemin = get_chemin_from_row(row);
-    if (!chemin) return;
-
-    // 1. Reset
-    stop_musique();
-
-    // 2. Load
-    ma_result result = ma_sound_init_from_file(&engine, chemin, 0, NULL, NULL, &sound);
-    if (result != MA_SUCCESS) {
-        set_status("Erreur : Impossible de lire ce fichier.", 1);
-        return;
-    }
-
-    // 3. Start
-    ma_sound_start(&sound);
-    is_loaded = 1;
-    is_paused = 0;
-    current_row = row; // On mémorise la ligne en cours
-
-    // Mise à jour visuelle (Sélection de la ligne + Icone Pause)
-    gtk_list_box_select_row(GTK_LIST_BOX(list_box_catalogue), row);
+// --- LOGIQUE METADATA (TAGLIB) ---
+void recuperer_infos_mp3(const char *chemin, char *titre_out, char *artiste_out, size_t size) {
+    // 1. On essaie de lire les tags du fichier
+    TagLib_File *file = taglib_file_new(chemin);
    
-    // Change l'icône du bouton en "Pause" car ça joue
-    gtk_button_set_icon_name(GTK_BUTTON(btn_play_pause), "media-playback-pause-symbolic");
-   
-    printf("[AUDIO] Lecture : %s\n", chemin);
-    set_status("Lecture en cours... 🎵", 0);
-}
+    int tags_trouves = 0;
 
-// --- CONTROLES (PLAY/PAUSE/NEXT/PREV) ---
+    if (file != NULL && taglib_file_is_valid(file)) {
+        TagLib_Tag *tag = taglib_file_tag(file);
+        if (tag != NULL) {
+            char *tag_title = taglib_tag_title(tag);
+            char *tag_artist = taglib_tag_artist(tag);
 
-void on_btn_play_pause_clicked(GtkButton *btn, gpointer user_data) {
-    (void)user_data;
-    if (!is_loaded) return; // Rien à faire si pas de musique
-
-    if (is_paused) {
-        // On reprend
-        ma_sound_start(&sound);
-        is_paused = 0;
-        gtk_button_set_icon_name(btn, "media-playback-pause-symbolic");
-        set_status("Lecture reprise.", 0);
-    } else {
-        // On met en pause
-        ma_sound_stop(&sound); // Stop sans uninit = Pause
-        is_paused = 1;
-        gtk_button_set_icon_name(btn, "media-playback-start-symbolic");
-        set_status("En pause.", 0);
+            // Si les tags ne sont pas vides, on les utilise
+            if (tag_title && strlen(tag_title) > 0) {
+                snprintf(titre_out, size, "%s", tag_title);
+                tags_trouves = 1;
+            }
+            if (tag_artist && strlen(tag_artist) > 0) {
+                snprintf(artiste_out, size, "%s", tag_artist);
+            } else {
+                snprintf(artiste_out, size, "Artiste inconnu");
+            }
+        }
+        taglib_file_free(file);
     }
-}
 
-void on_btn_next_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn; (void)user_data;
-    if (!current_row) return;
+    // 2. Si pas de tags (ou fichier invalide), on utilise l'ancienne méthode (Nom de fichier)
+    if (!tags_trouves) {
+        printf("[METADATA] Pas de tags trouvés, analyse du nom de fichier...\n");
+        char *nom_base = g_path_get_basename(chemin);
+        char *dot = strrchr(nom_base, '.');
+        if (dot) *dot = '\0'; // Enlève .mp3
 
-    // Calcul de l'index suivant
-    int index = gtk_list_box_row_get_index(current_row);
-    GtkListBoxRow *next_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index + 1);
-
-    if (next_row) {
-        jouer_musique(next_row);
-    } else {
-        set_status("Fin de la liste.", 1);
+        char *sep = strstr(nom_base, " - ");
+        if (sep) {
+            *sep = '\0';
+            snprintf(artiste_out, size, "%s", nom_base);
+            snprintf(titre_out, size, "%s", sep + 3);
+        } else {
+            snprintf(titre_out, size, "%s", nom_base);
+            snprintf(artiste_out, size, "Artiste inconnu");
+        }
+        g_free(nom_base);
     }
+
+    // Nettoyage final
+    trim(titre_out);
+    trim(artiste_out);
 }
 
-void on_btn_prev_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn; (void)user_data;
-    if (!current_row) return;
-
-    int index = gtk_list_box_row_get_index(current_row);
-    if (index > 0) {
-        GtkListBoxRow *prev_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index - 1);
-        if (prev_row) jouer_musique(prev_row);
-    }
-}
-
-// --- BDD (Inchangé) ---
+// --- BDD ---
 void init_db() {
     sqlite3 *db;
     char *err_msg = 0;
@@ -153,7 +107,36 @@ void init_db() {
     sqlite3_exec(db, sql, 0, 0, &err_msg);
     sqlite3_close(db);
 }
+
+// Vérifie si la chanson (Titre + Artiste) existe déjà, peu importe le chemin
+int chanson_existe_deja(const char *titre, const char *artiste) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int existe = 0;
+   
+    sqlite3_open(DB_FILE, &db);
+    // On cherche une ligne avec le même titre ET le même artiste (insensible à la casse)
+    const char *sql = "SELECT id FROM musiques WHERE titre = ? AND artiste = ? COLLATE NOCASE;";
+   
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, titre, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, artiste, -1, SQLITE_STATIC);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            existe = 1;
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return existe;
+}
+
 int ajouter_bdd(const char *chemin, const char *titre, const char *artiste) {
+    // ÉTAPE IMPORTANTE : On vérifie les doublons sémantiques
+    if (chanson_existe_deja(titre, artiste)) {
+        printf("[BDD] Doublon détecté pour : %s - %s\n", artiste, titre);
+        return 0; // On refuse l'ajout
+    }
+
     sqlite3 *db;
     sqlite3_stmt *stmt;
     int succes = 0;
@@ -169,6 +152,7 @@ int ajouter_bdd(const char *chemin, const char *titre, const char *artiste) {
     sqlite3_close(db);
     return succes;
 }
+
 void supprimer_bdd(const char *chemin) {
     sqlite3 *db;
     sqlite3_stmt *stmt;
@@ -182,13 +166,87 @@ void supprimer_bdd(const char *chemin) {
     sqlite3_close(db);
 }
 
-// --- INTERFACE ---
+// --- LOGIQUE AUDIO ---
+void stop_musique() {
+    if (is_loaded) {
+        ma_sound_stop(&sound);
+        ma_sound_uninit(&sound);
+        is_loaded = 0;
+        is_paused = 0;
+    }
+}
 
+char* get_chemin_from_row(GtkListBoxRow *row) {
+    if (!row) return NULL;
+    GtkWidget *box_row = gtk_list_box_row_get_child(row);
+    GtkWidget *btn_del = gtk_widget_get_last_child(box_row);
+    return (char *)g_object_get_data(G_OBJECT(btn_del), "mon_chemin");
+}
+
+void jouer_musique(GtkListBoxRow *row) {
+    if (!row) return;
+    char *chemin = get_chemin_from_row(row);
+    if (!chemin) return;
+
+    stop_musique();
+    ma_result result = ma_sound_init_from_file(&engine, chemin, 0, NULL, NULL, &sound);
+    if (result != MA_SUCCESS) {
+        set_status("Erreur : Fichier introuvable ou corrompu.", 1);
+        return;
+    }
+    ma_sound_start(&sound);
+    is_loaded = 1;
+    is_paused = 0;
+    current_row = row;
+
+    gtk_list_box_select_row(GTK_LIST_BOX(list_box_catalogue), row);
+    gtk_button_set_icon_name(GTK_BUTTON(btn_play_pause), "media-playback-pause-symbolic");
+   
+    // On récupère le titre pour l'afficher dans le statut
+    // (Un peu hacky, on pourrait stocker le titre aussi, mais c'est pour l'exemple)
+    set_status("Lecture en cours... 🎵", 0);
+}
+
+void on_btn_play_pause_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    if (!is_loaded) return;
+    if (is_paused) {
+        ma_sound_start(&sound);
+        is_paused = 0;
+        gtk_button_set_icon_name(btn, "media-playback-pause-symbolic");
+        set_status("Lecture reprise.", 0);
+    } else {
+        ma_sound_stop(&sound);
+        is_paused = 1;
+        gtk_button_set_icon_name(btn, "media-playback-start-symbolic");
+        set_status("En pause.", 0);
+    }
+}
+
+void on_btn_next_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    if (!current_row) return;
+    int index = gtk_list_box_row_get_index(current_row);
+    GtkListBoxRow *next_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index + 1);
+    if (next_row) jouer_musique(next_row);
+    else set_status("Fin de la liste.", 1);
+}
+
+void on_btn_prev_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    if (!current_row) return;
+    int index = gtk_list_box_row_get_index(current_row);
+    if (index > 0) {
+        GtkListBoxRow *prev_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index - 1);
+        if (prev_row) jouer_musique(prev_row);
+    }
+}
+
+// --- INTERFACE ---
 void on_supprimer_clicked(GtkButton *btn, gpointer user_data) {
     GtkWidget *row = GTK_WIDGET(user_data);
     char *chemin = (char *)g_object_get_data(G_OBJECT(btn), "mon_chemin");
     if (chemin) {
-        // Si c'est la musique en cours, on stop
         if (current_row == GTK_LIST_BOX_ROW(row)) stop_musique();
         supprimer_bdd(chemin);
         set_status("Musique supprimée.", 0);
@@ -196,16 +254,12 @@ void on_supprimer_clicked(GtkButton *btn, gpointer user_data) {
     gtk_list_box_remove(GTK_LIST_BOX(list_box_catalogue), row);
 }
 
-// Callback double clic
 void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
     (void)box; (void)user_data;
     jouer_musique(row);
 }
 
 void ajouter_ligne_visuelle(const char *chemin, const char *titre, const char *artiste) {
-    if (!titre) titre = "Titre inconnu";
-    if (!artiste) artiste = "Artiste inconnu";
-
     GtkWidget *row = gtk_list_box_row_new();
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *icon = gtk_image_new_from_icon_name("audio-x-generic");
@@ -253,27 +307,20 @@ void on_fichier_choisi(GtkNativeDialog *dialog, int response_id, gpointer user_d
         GFile *file = gtk_file_chooser_get_file(chooser);
         char *chemin = g_file_get_path(file);
         if (chemin) {
-            char *nom_fichier = g_path_get_basename(chemin);
-            char *dot = strrchr(nom_fichier, '.');
-            if (dot) *dot = '\0';
-            char titre[256]; char artiste[256];
-            char *sep = strstr(nom_fichier, " - ");
-            if (sep) {
-                *sep = '\0';
-                snprintf(artiste, sizeof(artiste), "%s", nom_fichier);
-                snprintf(titre, sizeof(titre), "%s", sep + 3);
-            } else {
-                snprintf(titre, sizeof(titre), "%s", nom_fichier);
-                strcpy(artiste, "Artiste inconnu");
-            }
-            trim(titre); trim(artiste);
+            char titre[256] = "";
+            char artiste[256] = "";
+
+            // NOUVEAU : On utilise TagLib pour lire les vraies infos
+            recuperer_infos_mp3(chemin, titre, artiste, sizeof(titre));
+
+            // Ajout BDD avec vérification anti-doublon (Titre/Artiste)
             if (ajouter_bdd(chemin, titre, artiste)) {
                 ajouter_ligne_visuelle(chemin, titre, artiste);
-                set_status("Succès : Importé !", 0);
+                set_status("Succès : Importé avec Métadonnées !", 0);
             } else {
-                set_status("Erreur : Déjà présent.", 1);
+                set_status("Erreur : Ce morceau existe déjà (Doublon).", 1);
             }
-            g_free(nom_fichier); g_free(chemin);
+            g_free(chemin);
         }
         g_object_unref(file);
     }
@@ -299,7 +346,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
     init_db();
 
     main_window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(main_window), "Player Musique V2 (Contrôles)");
+    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - V6 (Metadata)");
     gtk_window_set_default_size(GTK_WINDOW(main_window), 600, 600);
    
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
@@ -321,16 +368,14 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list_box_catalogue);
     g_signal_connect(list_box_catalogue, "row-activated", G_CALLBACK(on_row_activated), NULL);
 
-    // --- BARRE DE CONTRÔLE (NOUVEAU) ---
     GtkWidget *controls_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
     gtk_widget_set_halign(controls_box, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(box), controls_box);
 
     GtkWidget *btn_prev = gtk_button_new_from_icon_name("media-skip-backward-symbolic");
-    btn_play_pause = gtk_button_new_from_icon_name("media-playback-start-symbolic"); // Variable globale
+    btn_play_pause = gtk_button_new_from_icon_name("media-playback-start-symbolic");
     GtkWidget *btn_next = gtk_button_new_from_icon_name("media-skip-forward-symbolic");
 
-    // On grossit un peu les boutons
     gtk_widget_set_size_request(btn_play_pause, 60, 60);
     gtk_widget_set_size_request(btn_prev, 40, 40);
     gtk_widget_set_size_request(btn_next, 40, 40);
@@ -339,12 +384,10 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(controls_box), btn_play_pause);
     gtk_box_append(GTK_BOX(controls_box), btn_next);
 
-    // Connexion des signaux
     g_signal_connect(btn_play_pause, "clicked", G_CALLBACK(on_btn_play_pause_clicked), NULL);
     g_signal_connect(btn_next, "clicked", G_CALLBACK(on_btn_next_clicked), NULL);
     g_signal_connect(btn_prev, "clicked", G_CALLBACK(on_btn_prev_clicked), NULL);
 
-    // Bouton Ajouter
     GtkWidget *btn_explorer = gtk_button_new_with_label("📂 Ajouter un son");
     gtk_widget_set_halign(btn_explorer, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(box), btn_explorer);
@@ -358,7 +401,7 @@ static void activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char **argv) {
-    GtkApplication *app = gtk_application_new("com.projet.controls", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication *app = gtk_application_new("com.projet.meta", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     ma_engine_uninit(&engine);

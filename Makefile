@@ -3,7 +3,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g $(shell pkg-config --cflags gtk4)
 
 # C'est ICI qu'on relie la base de données (-lsqlite3)
-LIBS = $(shell pkg-config --libs gtk4) -lsqlite3 -lm -ldl -lpthread
+LIBS = $(shell pkg-config --libs gtk4) -lsqlite3 -lm -ldl -lpthread -ltag_c
 
 # Fichiers
 SRC = src/main.c
