@@ -1,6 +1,6 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-#define MINIAUDIO_IMPLEMENTATION // OBLIGATOIRE pour activer le code audio
+#define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
 #include <gtk/gtk.h>
@@ -15,11 +15,16 @@ const char *DB_FILE = "data/musique.db";
 GtkWidget *list_box_catalogue;
 GtkWidget *lbl_status;
 GtkWidget *main_window;
+GtkWidget *btn_play_pause; // On garde une référence pour changer l'icône
 
-// --- VARIABLES AUDIO GLOBALES ---
-ma_engine engine;  // Le moteur audio
-ma_sound sound;    // Le son en cours de lecture
-int is_playing = 0; // Est-ce qu'un son joue déjà ?
+// --- VARIABLES AUDIO ---
+ma_engine engine;
+ma_sound sound;
+int is_loaded = 0;  // Est-ce qu'un fichier est chargé en mémoire ?
+int is_paused = 0;  // Est-ce qu'on est en pause ?
+
+// NOUVEAU : On retient quelle ligne joue actuellement pour faire Suivant/Précédent
+GtkListBoxRow *current_row = NULL;
 
 // --- UTILITAIRES ---
 void trim(char *s) {
@@ -32,58 +37,122 @@ void trim(char *s) {
     memmove(s, p, l + 1);
 }
 
-// --- AUDIO : FONCTIONS DE LECTURE ---
-
-void stop_musique() {
-    if (is_playing) {
-        ma_sound_stop(&sound);
-        ma_sound_uninit(&sound); // On nettoie la mémoire du son précédent
-        is_playing = 0;
-    }
-}
-
-void jouer_musique(const char *chemin) {
-    // 1. Si une musique tourne déjà, on l'arrête
-    stop_musique();
-
-    // 2. On charge le nouveau fichier
-    ma_result result = ma_sound_init_from_file(&engine, chemin, 0, NULL, NULL, &sound);
-   
-    if (result != MA_SUCCESS) {
-        printf("[AUDIO] Erreur : Impossible de lire le fichier %s\n", chemin);
-        // On met à jour l'interface pour dire qu'il y a un souci
-        char *markup = g_markup_printf_escaped("<span foreground='red'><b>Erreur lecture audio !</b></span>");
-        gtk_label_set_markup(GTK_LABEL(lbl_status), markup);
-        g_free(markup);
-        return;
-    }
-
-    // 3. On lance la lecture
-    ma_sound_start(&sound);
-    is_playing = 1;
-   
-    printf("[AUDIO] Lecture en cours : %s\n", chemin);
-    char *markup = g_markup_printf_escaped("<span foreground='blue'><b>Lecture en cours... 🎵</b></span>");
+void set_status(const char *message, int is_error) {
+    char *markup;
+    if (is_error) markup = g_markup_printf_escaped("<span foreground='red'><b>%s</b></span>", message);
+    else markup = g_markup_printf_escaped("<span foreground='green'><b>%s</b></span>", message);
     gtk_label_set_markup(GTK_LABEL(lbl_status), markup);
     g_free(markup);
 }
 
-// --- BDD ---
+// --- LOGIQUE AUDIO ---
+
+void stop_musique() {
+    if (is_loaded) {
+        ma_sound_stop(&sound);
+        ma_sound_uninit(&sound);
+        is_loaded = 0;
+        is_paused = 0;
+    }
+}
+
+// Fonction pour récupérer le chemin caché dans une ligne
+char* get_chemin_from_row(GtkListBoxRow *row) {
+    if (!row) return NULL;
+    GtkWidget *box_row = gtk_list_box_row_get_child(row);
+    GtkWidget *btn_del = gtk_widget_get_last_child(box_row);
+    return (char *)g_object_get_data(G_OBJECT(btn_del), "mon_chemin");
+}
+
+void jouer_musique(GtkListBoxRow *row) {
+    if (!row) return;
+
+    char *chemin = get_chemin_from_row(row);
+    if (!chemin) return;
+
+    // 1. Reset
+    stop_musique();
+
+    // 2. Load
+    ma_result result = ma_sound_init_from_file(&engine, chemin, 0, NULL, NULL, &sound);
+    if (result != MA_SUCCESS) {
+        set_status("Erreur : Impossible de lire ce fichier.", 1);
+        return;
+    }
+
+    // 3. Start
+    ma_sound_start(&sound);
+    is_loaded = 1;
+    is_paused = 0;
+    current_row = row; // On mémorise la ligne en cours
+
+    // Mise à jour visuelle (Sélection de la ligne + Icone Pause)
+    gtk_list_box_select_row(GTK_LIST_BOX(list_box_catalogue), row);
+   
+    // Change l'icône du bouton en "Pause" car ça joue
+    gtk_button_set_icon_name(GTK_BUTTON(btn_play_pause), "media-playback-pause-symbolic");
+   
+    printf("[AUDIO] Lecture : %s\n", chemin);
+    set_status("Lecture en cours... 🎵", 0);
+}
+
+// --- CONTROLES (PLAY/PAUSE/NEXT/PREV) ---
+
+void on_btn_play_pause_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    if (!is_loaded) return; // Rien à faire si pas de musique
+
+    if (is_paused) {
+        // On reprend
+        ma_sound_start(&sound);
+        is_paused = 0;
+        gtk_button_set_icon_name(btn, "media-playback-pause-symbolic");
+        set_status("Lecture reprise.", 0);
+    } else {
+        // On met en pause
+        ma_sound_stop(&sound); // Stop sans uninit = Pause
+        is_paused = 1;
+        gtk_button_set_icon_name(btn, "media-playback-start-symbolic");
+        set_status("En pause.", 0);
+    }
+}
+
+void on_btn_next_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    if (!current_row) return;
+
+    // Calcul de l'index suivant
+    int index = gtk_list_box_row_get_index(current_row);
+    GtkListBoxRow *next_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index + 1);
+
+    if (next_row) {
+        jouer_musique(next_row);
+    } else {
+        set_status("Fin de la liste.", 1);
+    }
+}
+
+void on_btn_prev_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    if (!current_row) return;
+
+    int index = gtk_list_box_row_get_index(current_row);
+    if (index > 0) {
+        GtkListBoxRow *prev_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(list_box_catalogue), index - 1);
+        if (prev_row) jouer_musique(prev_row);
+    }
+}
+
+// --- BDD (Inchangé) ---
 void init_db() {
     sqlite3 *db;
     char *err_msg = 0;
     int rc = sqlite3_open(DB_FILE, &db);
     if (rc != SQLITE_OK) return;
-
-    const char *sql = "CREATE TABLE IF NOT EXISTS musiques ("
-                      "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                      "chemin TEXT UNIQUE, "
-                      "titre TEXT, "
-                      "artiste TEXT);";
+    const char *sql = "CREATE TABLE IF NOT EXISTS musiques (id INTEGER PRIMARY KEY AUTOINCREMENT, chemin TEXT UNIQUE, titre TEXT, artiste TEXT);";
     sqlite3_exec(db, sql, 0, 0, &err_msg);
     sqlite3_close(db);
 }
-
 int ajouter_bdd(const char *chemin, const char *titre, const char *artiste) {
     sqlite3 *db;
     sqlite3_stmt *stmt;
@@ -100,7 +169,6 @@ int ajouter_bdd(const char *chemin, const char *titre, const char *artiste) {
     sqlite3_close(db);
     return succes;
 }
-
 void supprimer_bdd(const char *chemin) {
     sqlite3 *db;
     sqlite3_stmt *stmt;
@@ -116,42 +184,22 @@ void supprimer_bdd(const char *chemin) {
 
 // --- INTERFACE ---
 
-// NOUVEAU : Fonction appelée quand on double-clique sur une ligne
-void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
-    (void)box; (void)user_data;
-   
-    // On doit retrouver le bouton poubelle caché dans la ligne pour récupérer le chemin
-    // C'est une astuce : on sait que le chemin est stocké dans le bouton "user-trash"
-   
-    GtkWidget *box_row = gtk_list_box_row_get_child(row); // La boite horizontale
-    GtkWidget *btn_del = gtk_widget_get_last_child(box_row); // Le dernier élément est le bouton poubelle
-   
-    // On récupère le chemin stocké
-    char *chemin = (char *)g_object_get_data(G_OBJECT(btn_del), "mon_chemin");
-   
-    if (chemin) {
-        jouer_musique(chemin);
-    }
-}
-
-void set_status(const char *message, int is_error) {
-    char *markup;
-    if (is_error) markup = g_markup_printf_escaped("<span foreground='red'><b>%s</b></span>", message);
-    else markup = g_markup_printf_escaped("<span foreground='green'><b>%s</b></span>", message);
-    gtk_label_set_markup(GTK_LABEL(lbl_status), markup);
-    g_free(markup);
-}
-
 void on_supprimer_clicked(GtkButton *btn, gpointer user_data) {
     GtkWidget *row = GTK_WIDGET(user_data);
     char *chemin = (char *)g_object_get_data(G_OBJECT(btn), "mon_chemin");
     if (chemin) {
+        // Si c'est la musique en cours, on stop
+        if (current_row == GTK_LIST_BOX_ROW(row)) stop_musique();
         supprimer_bdd(chemin);
-        // Si on supprime la musique en cours de lecture, on l'arrête !
-        stop_musique();
         set_status("Musique supprimée.", 0);
     }
     gtk_list_box_remove(GTK_LIST_BOX(list_box_catalogue), row);
+}
+
+// Callback double clic
+void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+    (void)box; (void)user_data;
+    jouer_musique(row);
 }
 
 void ajouter_ligne_visuelle(const char *chemin, const char *titre, const char *artiste) {
@@ -178,7 +226,6 @@ void ajouter_ligne_visuelle(const char *chemin, const char *titre, const char *a
     gtk_box_append(GTK_BOX(box), btn_del);
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
     gtk_list_box_append(GTK_LIST_BOX(list_box_catalogue), row);
-   
     g_signal_connect(btn_del, "clicked", G_CALLBACK(on_supprimer_clicked), row);
 }
 
@@ -248,17 +295,12 @@ void on_ouvrir_explorateur_clicked(GtkButton *btn, gpointer user_data) {
 
 static void activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
-   
-    // --- INITIALISATION AUDIO ---
-    if (ma_engine_init(NULL, &engine) != MA_SUCCESS) {
-        printf("ATTENTION : Impossible d'initialiser le moteur audio !\n");
-    }
-
+    if (ma_engine_init(NULL, &engine) != MA_SUCCESS) printf("Erreur audio init\n");
     init_db();
 
     main_window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - PLAYER V1");
-    gtk_window_set_default_size(GTK_WINDOW(main_window), 600, 500);
+    gtk_window_set_title(GTK_WINDOW(main_window), "Player Musique V2 (Contrôles)");
+    gtk_window_set_default_size(GTK_WINDOW(main_window), 600, 600);
    
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_top(box, 15);
@@ -277,20 +319,38 @@ static void activate(GtkApplication *app, gpointer user_data) {
    
     list_box_catalogue = gtk_list_box_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list_box_catalogue);
-   
-    // --- CONNEXION DU SIGNAL "ROW ACTIVATED" (Double Clic) ---
     g_signal_connect(list_box_catalogue, "row-activated", G_CALLBACK(on_row_activated), NULL);
 
-    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_widget_set_halign(hbox, GTK_ALIGN_CENTER);
-    gtk_box_append(GTK_BOX(box), hbox);
-   
+    // --- BARRE DE CONTRÔLE (NOUVEAU) ---
+    GtkWidget *controls_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_widget_set_halign(controls_box, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(box), controls_box);
+
+    GtkWidget *btn_prev = gtk_button_new_from_icon_name("media-skip-backward-symbolic");
+    btn_play_pause = gtk_button_new_from_icon_name("media-playback-start-symbolic"); // Variable globale
+    GtkWidget *btn_next = gtk_button_new_from_icon_name("media-skip-forward-symbolic");
+
+    // On grossit un peu les boutons
+    gtk_widget_set_size_request(btn_play_pause, 60, 60);
+    gtk_widget_set_size_request(btn_prev, 40, 40);
+    gtk_widget_set_size_request(btn_next, 40, 40);
+
+    gtk_box_append(GTK_BOX(controls_box), btn_prev);
+    gtk_box_append(GTK_BOX(controls_box), btn_play_pause);
+    gtk_box_append(GTK_BOX(controls_box), btn_next);
+
+    // Connexion des signaux
+    g_signal_connect(btn_play_pause, "clicked", G_CALLBACK(on_btn_play_pause_clicked), NULL);
+    g_signal_connect(btn_next, "clicked", G_CALLBACK(on_btn_next_clicked), NULL);
+    g_signal_connect(btn_prev, "clicked", G_CALLBACK(on_btn_prev_clicked), NULL);
+
+    // Bouton Ajouter
     GtkWidget *btn_explorer = gtk_button_new_with_label("📂 Ajouter un son");
-    gtk_widget_set_size_request(btn_explorer, 200, 40);
-    gtk_box_append(GTK_BOX(hbox), btn_explorer);
+    gtk_widget_set_halign(btn_explorer, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(box), btn_explorer);
     g_signal_connect(btn_explorer, "clicked", G_CALLBACK(on_ouvrir_explorateur_clicked), NULL);
 
-    lbl_status = gtk_label_new("Double-cliquez sur une musique pour la lire !");
+    lbl_status = gtk_label_new("");
     gtk_box_append(GTK_BOX(box), lbl_status);
    
     charger_catalogue();
@@ -298,13 +358,10 @@ static void activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char **argv) {
-    GtkApplication *app = gtk_application_new("com.projet.audio", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication *app = gtk_application_new("com.projet.controls", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);
-   
-    // Nettoyage audio à la fermeture
     ma_engine_uninit(&engine);
-   
     g_object_unref(app);
     return status;
 }
