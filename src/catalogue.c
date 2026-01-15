@@ -108,4 +108,3 @@ void charger_catalogue() {
     }
     sqlite3_finalize(s); sqlite3_close(db);
 }
-

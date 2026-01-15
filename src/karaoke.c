@@ -1,35 +1,37 @@
 #include "karaoke.h"
 #include "lecteur.h"
+#include <stdio.h>
 
 guint scroll_timer_id = 0;
 
 gboolean on_scroll_timer(gpointer user_data) {
     (void)user_data;
    
-    // Si pas chargé ou pause, on ne fait rien
     if (!is_loaded || is_paused) return TRUE;
 
-    // 1. VERIFICATION FIN DE MUSIQUE (Auto-Play)
-    if (is_audio_finished()) {
-        // La musique est finie, on passe à la suivante !
-        on_btn_next_clicked(NULL, NULL);
-        return TRUE; // On garde le timer actif pour la prochaine
+    // 1. Mise à jour de la barre et du texte (V27)
+    float pos = get_audio_position();
+    float dur = get_audio_duration();
+
+    if(dur > 0) {
+        // Barre
+        gtk_range_set_range(GTK_RANGE(scale_progress), 0, dur);
+        gtk_range_set_value(GTK_RANGE(scale_progress), pos);
+       
+        // Texte "01:20 / 03:45"
+        int m_cur = (int)pos / 60; int s_cur = (int)pos % 60;
+        int m_tot = (int)dur / 60; int s_tot = (int)dur % 60;
+       
+        char *txt = g_strdup_printf("%02d:%02d / %02d:%02d", m_cur, s_cur, m_tot, s_tot);
+        gtk_label_set_text(GTK_LABEL(lbl_duree), txt);
+        g_free(txt);
     }
 
-    // 2. SCROLL KARAOKE (Hybride V18 - Réactivé !)
-    // On tente de récupérer la position pour faire défiler le texte
-    // Si ton miniaudio plante ici, commente les lignes ci-dessous
-   
-    /* Début tentative scroll */
-    // ma_uint64 len=0; ma_sound_get_length_in_pcm_frames(&sound, &len);
-    // ma_uint64 cur = ma_sound_get_time_in_pcm_frames(&sound);
-    // if(len > 0) {
-    //    float ratio = (float)cur / (float)len;
-    //    GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scrolled_window_paroles));
-    //    double max = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
-    //    if(max > 0) gtk_adjustment_set_value(adj, max * ratio);
-    // }
-    /* Fin tentative scroll */
+    // 2. Auto-Play (Fin de piste)
+    if (is_audio_finished()) {
+        on_btn_next_clicked(NULL, NULL);
+        return TRUE;
+    }
 
     return TRUE;
 }

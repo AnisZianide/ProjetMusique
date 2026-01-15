@@ -22,6 +22,9 @@ GtkWidget *txt_paroles_buffer;
 GtkWidget *img_pochette;
 GtkWidget *scrolled_window_paroles;
 GtkWidget *btn_play_pause;
+// V27
+GtkWidget *lbl_duree;
+GtkWidget *scale_progress;
 
 // --- CSS LOADER ---
 void load_css() {
@@ -31,7 +34,7 @@ void load_css() {
     g_object_unref(provider);
 }
 
-// Callbacks généraux
+// Callbacks
 void on_search_changed(GtkSearchEntry *e, gpointer u) { (void)e; (void)u; charger_catalogue(); }
 void on_sort_changed(GObject *o, GParamSpec *p, gpointer u) { (void)o; (void)p; (void)u; charger_catalogue(); }
 void on_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; jouer_musique(r); }
@@ -40,8 +43,8 @@ static void activate(GtkApplication *app, gpointer u) { (void)u;
     init_audio(); init_db(); load_css();
    
     main_window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - V26 (Finale)");
-    gtk_window_set_default_size(GTK_WINDOW(main_window), 950, 700);
+    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - V27 (Cover & Durée)");
+    gtk_window_set_default_size(GTK_WINDOW(main_window), 950, 750);
    
     GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0); gtk_window_set_child(GTK_WINDOW(main_window), vb);
     GtkWidget *hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); gtk_widget_set_vexpand(hb, TRUE); gtk_box_append(GTK_BOX(vb), hb);
@@ -52,8 +55,7 @@ static void activate(GtkApplication *app, gpointer u) { (void)u;
     GtkWidget *p1 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     GtkWidget *box_ctrl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
    
-    extern GtkWidget *entry_recherche;
-    extern GtkWidget *dd_tri;
+    extern GtkWidget *entry_recherche; extern GtkWidget *dd_tri;
     entry_recherche = gtk_search_entry_new(); gtk_widget_set_hexpand(entry_recherche, TRUE);
     g_signal_connect(entry_recherche, "search-changed", G_CALLBACK(on_search_changed), NULL); gtk_box_append(GTK_BOX(box_ctrl), entry_recherche);
     const char *options[] = { "🕒 Récent", "🔤 Titre", "🎤 Artiste", NULL }; dd_tri = gtk_drop_down_new_from_strings(options);
@@ -74,36 +76,37 @@ static void activate(GtkApplication *app, gpointer u) { (void)u;
 
     // LECTURE
     GtkWidget *p4 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); gtk_widget_set_halign(p4, GTK_ALIGN_CENTER);
-    img_pochette = gtk_image_new_from_icon_name("audio-x-generic"); gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 150); gtk_widget_set_margin_top(img_pochette, 20); gtk_box_append(GTK_BOX(p4), img_pochette);
+    img_pochette = gtk_image_new_from_icon_name("audio-x-generic"); gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 200); gtk_widget_set_margin_top(img_pochette, 20); gtk_box_append(GTK_BOX(p4), img_pochette);
+   
     lbl_lecture_titre = gtk_label_new("<b>...</b>"); gtk_label_set_use_markup(GTK_LABEL(lbl_lecture_titre), 1); gtk_widget_set_margin_top(lbl_lecture_titre, 10); gtk_box_append(GTK_BOX(p4), lbl_lecture_titre);
-    GtkWidget *frm = gtk_frame_new("Paroles"); gtk_widget_set_margin_top(frm, 20); gtk_widget_set_size_request(frm, 400, 300);
+   
+    // --- CORRECTION ICI : Ajout du 4ème argument (step = 1) ---
+    scale_progress = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
+   
+    gtk_widget_set_size_request(scale_progress, 300, -1);
+    gtk_widget_set_margin_top(scale_progress, 10);
+    gtk_box_append(GTK_BOX(p4), scale_progress);
+
+    lbl_duree = gtk_label_new("00:00 / 00:00");
+    gtk_widget_set_margin_bottom(lbl_duree, 10);
+    gtk_box_append(GTK_BOX(p4), lbl_duree);
+
+    GtkWidget *frm = gtk_frame_new("Paroles"); gtk_widget_set_margin_top(frm, 10); gtk_widget_set_size_request(frm, 400, 200);
     scrolled_window_paroles = gtk_scrolled_window_new();
     txt_paroles_buffer = gtk_text_view_new(); gtk_text_view_set_editable(GTK_TEXT_VIEW(txt_paroles_buffer), FALSE); gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(txt_paroles_buffer), GTK_WRAP_WORD); gtk_text_view_set_justification(GTK_TEXT_VIEW(txt_paroles_buffer), GTK_JUSTIFY_CENTER); gtk_widget_set_margin_start(txt_paroles_buffer, 10); gtk_widget_set_margin_end(txt_paroles_buffer, 10); gtk_widget_set_margin_top(txt_paroles_buffer, 10); gtk_widget_set_margin_bottom(txt_paroles_buffer, 10);
-   
-    // --- PLUS DE CODE CSS ICI (C'EST NETTOYÉ) ---
-   
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window_paroles), txt_paroles_buffer); gtk_frame_set_child(GTK_FRAME(frm), scrolled_window_paroles); gtk_box_append(GTK_BOX(p4), frm);
     gtk_stack_add_titled(GTK_STACK(stack), p4, "lec", "Lecture");
 
     // FOOTER
     GtkWidget *foot = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5); gtk_widget_add_css_class(foot, "footer");
     gtk_box_append(GTK_BOX(vb), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL)); lbl_current_title = gtk_label_new("Prêt"); gtk_box_append(GTK_BOX(foot), lbl_current_title); GtkWidget *ctrl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20); gtk_widget_set_halign(ctrl, GTK_ALIGN_CENTER);
-   
-    // Shuffle
-    GtkWidget *b_shuf = gtk_button_new_from_icon_name("media-playlist-shuffle-symbolic");
-    // Pour éviter erreur de compil, on declare extern si besoin, ou on inclut lecteur.h
-    // (normalement lecteur.h est inclus en haut)
-    // g_signal_connect(b_shuf, "clicked", G_CALLBACK(on_btn_shuffle_clicked), NULL);
-    // NOTE : Si tu n'as pas mis on_btn_shuffle_clicked dans lecteur.h/c, commente la ligne ci-dessous
-    // Sinon laisse-là. Je suppose que tu as mis le code V25 dans lecteur.c
     extern void on_btn_shuffle_clicked(GtkButton *b, gpointer u);
-    g_signal_connect(b_shuf, "clicked", G_CALLBACK(on_btn_shuffle_clicked), NULL);
-    gtk_box_append(GTK_BOX(ctrl), b_shuf);
-
+    GtkWidget *b_shuf = gtk_button_new_from_icon_name("media-playlist-shuffle-symbolic");
+    g_signal_connect(b_shuf, "clicked", G_CALLBACK(on_btn_shuffle_clicked), NULL); gtk_box_append(GTK_BOX(ctrl), b_shuf);
     GtkWidget *bp = gtk_button_new_from_icon_name("media-skip-backward-symbolic"); btn_play_pause = gtk_button_new_from_icon_name("media-playback-start-symbolic"); GtkWidget *bn = gtk_button_new_from_icon_name("media-skip-forward-symbolic"); gtk_box_append(GTK_BOX(ctrl), bp); gtk_box_append(GTK_BOX(ctrl), btn_play_pause); gtk_box_append(GTK_BOX(ctrl), bn); gtk_box_append(GTK_BOX(foot), ctrl); lbl_status = gtk_label_new(""); gtk_box_append(GTK_BOX(foot), lbl_status); gtk_box_append(GTK_BOX(vb), foot);
     g_signal_connect(btn_play_pause, "clicked", G_CALLBACK(on_btn_play_pause_clicked), NULL); g_signal_connect(bn, "clicked", G_CALLBACK(on_btn_next_clicked), NULL); g_signal_connect(bp, "clicked", G_CALLBACK(on_btn_prev_clicked), NULL);
 
     charger_catalogue(); charger_listes_annexes(); gtk_window_present(GTK_WINDOW(main_window));
 }
 
-int main(int c, char **v) { GtkApplication *a = gtk_application_new("com.projet.v26", G_APPLICATION_DEFAULT_FLAGS); g_signal_connect(a, "activate", G_CALLBACK(activate), NULL); int s = g_application_run(G_APPLICATION(a), c, v); g_object_unref(a); return s; }
+int main(int c, char **v) { GtkApplication *a = gtk_application_new("com.projet.v27", G_APPLICATION_DEFAULT_FLAGS); g_signal_connect(a, "activate", G_CALLBACK(activate), NULL); int s = g_application_run(G_APPLICATION(a), c, v); g_object_unref(a); return s; }

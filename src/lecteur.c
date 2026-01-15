@@ -4,6 +4,8 @@
 #include "karaoke.h"
 #include <stdlib.h>
 #include <time.h>
+#include <stdio.h>
+#include <unistd.h>
 
 ma_engine engine;
 ma_sound sound;
@@ -29,6 +31,19 @@ int is_audio_finished() {
     return ma_sound_at_end(&sound);
 }
 
+float get_audio_duration() {
+    if(!is_loaded) return 0;
+    ma_uint64 len = 0;
+    ma_sound_get_length_in_pcm_frames(&sound, &len);
+    return (float)len / (float)ma_engine_get_sample_rate(&engine);
+}
+
+float get_audio_position() {
+    if(!is_loaded) return 0;
+    ma_uint64 cur = ma_sound_get_time_in_pcm_frames(&sound);
+    return (float)cur / (float)ma_engine_get_sample_rate(&engine);
+}
+
 char* get_chemin_from_row(GtkListBoxRow *r) {
     if(!r) return NULL;
     GtkWidget *b = gtk_list_box_row_get_child(r);
@@ -36,10 +51,29 @@ char* get_chemin_from_row(GtkListBoxRow *r) {
     return (char*)g_object_get_data(G_OBJECT(bt), "mon_chemin");
 }
 
+void charger_pochette_intelligente(const char *chemin) {
+    char *ip = get_associated_file(chemin, ".jpg");
+    if(!ip) ip = get_associated_file(chemin, ".png");
+   
+    if(!ip) {
+        char cmd[1024];
+        snprintf(cmd, sizeof(cmd), "ffmpeg -i \"%s\" -an -vcodec copy /tmp/pochette_temp.jpg -y > /dev/null 2>&1", chemin);
+        int res = system(cmd);
+        if(res == 0) ip = g_strdup("/tmp/pochette_temp.jpg");
+    }
+
+    if(ip){
+        gtk_image_set_from_file(GTK_IMAGE(img_pochette), ip);
+        gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 250);
+        g_free(ip);
+    } else {
+        gtk_image_set_from_icon_name(GTK_IMAGE(img_pochette), "audio-x-generic");
+        gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 150);
+    }
+}
+
 void jouer_musique(GtkListBoxRow *r) {
     if(!r) return;
-   
-    // Correction de l'indentation ici (plus de warning)
     char *c = get_chemin_from_row(r);
     if(!c) return;
 
@@ -48,8 +82,11 @@ void jouer_musique(GtkListBoxRow *r) {
     const char *mk = gtk_label_get_label(GTK_LABEL(lb));
 
     stop_musique();
-    if(ma_sound_init_from_file(&engine, c, 0, NULL, NULL, &sound) != MA_SUCCESS){
-        set_status("Erreur fichier.", 1);
+   
+    // CORRECTION AUDIO : Ajout de MA_SOUND_FLAG_DECODE pour charger en RAM
+    // Cela évite le streaming disque instable (grésillements) et le crash assertion
+    if(ma_sound_init_from_file(&engine, c, MA_SOUND_FLAG_DECODE, NULL, NULL, &sound) != MA_SUCCESS){
+        set_status("Erreur lecture fichier.", 1);
         return;
     }
    
@@ -66,7 +103,10 @@ void jouer_musique(GtkListBoxRow *r) {
     if(mk) gtk_label_set_markup(GTK_LABEL(lbl_lecture_titre), mk);
     gtk_label_set_markup(GTK_LABEL(lbl_current_title), "Lecture en cours... 🎵");
 
-    GtkTextBuffer *buf = GTK_TEXT_BUFFER(txt_paroles_buffer);
+    // CORRECTION GTK : On récupère proprement le buffer
+    // txt_paroles_buffer est un GtkTextView, on doit demander son buffer
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(txt_paroles_buffer));
+   
     char *pp = get_associated_file(c, ".txt");
     if(pp){
         char *cnt = lire_contenu_fichier(pp);
@@ -77,16 +117,7 @@ void jouer_musique(GtkListBoxRow *r) {
         gtk_text_buffer_set_text(buf, "\n(Pas de paroles trouvées.)", -1);
     }
    
-    char *ip = get_associated_file(c, ".jpg");
-    if(!ip) ip = get_associated_file(c, ".png");
-    if(ip){
-        gtk_image_set_from_file(GTK_IMAGE(img_pochette), ip);
-        gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 200);
-        g_free(ip);
-    } else {
-        gtk_image_set_from_icon_name(GTK_IMAGE(img_pochette), "audio-x-generic");
-        gtk_image_set_pixel_size(GTK_IMAGE(img_pochette), 150);
-    }
+    charger_pochette_intelligente(c);
 }
 
 void on_btn_play_pause_clicked(GtkButton *b, gpointer u) {
@@ -105,9 +136,10 @@ void on_btn_next_clicked(GtkButton *b, gpointer u) {
         GtkListBoxRow *next_row = NULL;
         int i = gtk_list_box_row_get_index(current_row);
         int count = 0;
-        while(gtk_list_box_get_row_at_index(current_playing_list, count) != NULL) count++;
+        GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(current_playing_list));
+        while (child) { count++; child = gtk_widget_get_next_sibling(child); }
 
-        if (shuffle_mode) {
+        if (shuffle_mode && count > 1) {
             int random_index = rand() % count;
             next_row = gtk_list_box_get_row_at_index(current_playing_list, random_index);
         } else {
