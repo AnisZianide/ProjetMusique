@@ -3,47 +3,69 @@
 #include "base_sqlite.h"
 #include <stdio.h>
 
-// On doit déclarer la fonction ici car elle est dans catalogue.c
+extern const char *DB_FILE; // Nécessaire pour ouvrir la connexion locale
+
 void ajouter_ligne_visuelle_generique(GtkListBox *lb, const char *c, const char *t, const char *a, const char *alb, int dur, int pl);
 
 void charger_contenu_playlist(const char *n) {
-    GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist); while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; }
-    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db);
-    char q[512];
-    // V26 : On récupère aussi album et durée
-    sprintf(q, "SELECT m.chemin, m.titre, m.artiste, m.album, m.duree FROM musiques m JOIN compositions c ON m.id=c.musique_id JOIN playlists p ON p.id=c.playlist_id WHERE p.nom='%s';", n);
-    sqlite3_prepare_v2(db, q, -1, &s, 0);
+    GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist);
+    while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; }
+   
+    sqlite3 *db; sqlite3_stmt *s;
+    sqlite3_open(DB_FILE, &db);
+   
+    // V29 : Requête sécurisée (plus de sprintf)
+    const char *sql = "SELECT m.chemin, m.titre, m.artiste, m.album, m.duree "
+                      "FROM musiques m "
+                      "JOIN compositions c ON m.id=c.musique_id "
+                      "JOIN playlists p ON p.id=c.playlist_id "
+                      "WHERE p.nom=?;";
+                     
+    sqlite3_prepare_v2(db, sql, -1, &s, 0);
+    sqlite3_bind_text(s, 1, n, -1, SQLITE_STATIC); // Le bind protège tout
+
     while(sqlite3_step(s)==SQLITE_ROW)
         ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_playlist),
-            (const char*)sqlite3_column_text(s,0),
-            (const char*)sqlite3_column_text(s,1),
-            (const char*)sqlite3_column_text(s,2),
-            (const char*)sqlite3_column_text(s,3),
-            sqlite3_column_int(s,4),
-            0);
+            (const char*)sqlite3_column_text(s,0), (const char*)sqlite3_column_text(s,1), (const char*)sqlite3_column_text(s,2),
+            (const char*)sqlite3_column_text(s,3), sqlite3_column_int(s,4), 0);
+           
     sqlite3_finalize(s); sqlite3_close(db);
 }
 
 void charger_contenu_artiste(const char *nom_artiste) {
-    GtkWidget *c = gtk_widget_get_first_child(list_box_contenu_artiste); while(c) { GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_artiste), c); c=x; }
-    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db);
-    char q[512];
-    sprintf(q, "SELECT chemin, titre, artiste, album, duree FROM musiques WHERE artiste='%s';", nom_artiste);
-    sqlite3_prepare_v2(db, q, -1, &s, 0);
+    GtkWidget *c = gtk_widget_get_first_child(list_box_contenu_artiste);
+    while(c) { GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_artiste), c); c=x; }
+   
+    sqlite3 *db; sqlite3_stmt *s;
+    sqlite3_open(DB_FILE, &db);
+   
+    // V29 : Requête sécurisée
+    const char *sql = "SELECT chemin, titre, artiste, album, duree FROM musiques WHERE artiste=?;";
+   
+    sqlite3_prepare_v2(db, sql, -1, &s, 0);
+    sqlite3_bind_text(s, 1, nom_artiste, -1, SQLITE_STATIC);
+
     while(sqlite3_step(s)==SQLITE_ROW) {
         ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_artiste),
-            (const char*)sqlite3_column_text(s, 0),
-            (const char*)sqlite3_column_text(s, 1),
-            (const char*)sqlite3_column_text(s, 2),
-            (const char*)sqlite3_column_text(s, 3),
-            sqlite3_column_int(s, 4),
-            1);
+            (const char*)sqlite3_column_text(s, 0), (const char*)sqlite3_column_text(s, 1), (const char*)sqlite3_column_text(s, 2),
+            (const char*)sqlite3_column_text(s, 3), sqlite3_column_int(s, 4), 1);
     }
     sqlite3_finalize(s); sqlite3_close(db);
 }
 
 void on_artiste_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; GtkWidget *label = gtk_list_box_row_get_child(r); const char *nom_artiste = gtk_label_get_text(GTK_LABEL(label)); charger_contenu_artiste(nom_artiste); }
-void on_pl_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; GtkWidget *x=gtk_list_box_row_get_child(r); GtkWidget *l=gtk_widget_get_last_child(x); charger_contenu_playlist(gtk_label_get_text(GTK_LABEL(l))); }
+void on_pl_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; GtkWidget *x=gtk_list_box_row_get_child(r); GtkWidget *l=gtk_widget_get_next_sibling(gtk_widget_get_first_child(x)); charger_contenu_playlist(gtk_label_get_text(GTK_LABEL(l))); }
+
+void on_del_pl_clicked(GtkButton *b, gpointer u) {
+    (void)u;
+    char *nom = (char*)g_object_get_data(G_OBJECT(b), "nom_pl");
+    if(nom) {
+        supprimer_playlist_bdd(nom);
+        charger_listes_annexes();
+        GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist);
+        while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; }
+    }
+}
 
 void charger_listes_annexes() {
     GtkWidget *c; c=gtk_widget_get_first_child(list_box_artistes); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_artistes), c); c=n; }
@@ -56,8 +78,17 @@ void charger_listes_annexes() {
     c=gtk_widget_get_first_child(list_box_playlists); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_playlists), c); c=n; }
     sqlite3_prepare_v2(db, "SELECT nom FROM playlists ORDER BY nom;", -1, &s, 0);
     while(sqlite3_step(s)==SQLITE_ROW){
-        GtkWidget *r=gtk_list_box_row_new(); GtkWidget *b=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10); GtkWidget *l=gtk_label_new((const char*)sqlite3_column_text(s,0));
-        gtk_box_append(GTK_BOX(b), gtk_image_new_from_icon_name("folder-music-symbolic")); gtk_box_append(GTK_BOX(b), l); gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), b); gtk_list_box_append(GTK_LIST_BOX(list_box_playlists), r);
+        GtkWidget *r=gtk_list_box_row_new();
+        GtkWidget *b=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        gtk_box_append(GTK_BOX(b), gtk_image_new_from_icon_name("folder-music-symbolic"));
+        const char *nom_pl = (const char*)sqlite3_column_text(s,0);
+        GtkWidget *l=gtk_label_new(nom_pl); gtk_widget_set_hexpand(l, TRUE); gtk_label_set_xalign(GTK_LABEL(l), 0);
+        gtk_box_append(GTK_BOX(b), l);
+        GtkWidget *btn_del = gtk_button_new_from_icon_name("user-trash-symbolic");
+        g_object_set_data_full(G_OBJECT(btn_del), "nom_pl", g_strdup(nom_pl), g_free);
+        g_signal_connect(btn_del, "clicked", G_CALLBACK(on_del_pl_clicked), NULL);
+        gtk_box_append(GTK_BOX(b), btn_del);
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), b); gtk_list_box_append(GTK_LIST_BOX(list_box_playlists), r);
     } sqlite3_finalize(s); sqlite3_close(db);
 }
 
