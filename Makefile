@@ -1,9 +1,10 @@
 CC = gcc
 
-# ICI C'EST TRES IMPORTANT : taglib_c
-CFLAGS = -Wall -Wextra -g -std=c99 `pkg-config --cflags gtk4 taglib_c sqlite3`
+# 1. On ajoute -Wno-deprecated-declarations pour éviter les erreurs de version GTK
+# 2. On met bien taglib_c
+CFLAGS = -Wall -Wextra -Wno-deprecated-declarations -g -std=c99 `pkg-config --cflags gtk4 taglib_c sqlite3`
 
-# ICI AUSSI : taglib_c
+# 3. Ici aussi : taglib_c
 LIBS = `pkg-config --libs gtk4 taglib_c sqlite3` -lm -ldl -lpthread
 
 SRC = src/main.c \

@@ -3,19 +3,42 @@
 #include "base_sqlite.h"
 #include <stdio.h>
 
+// On doit déclarer la fonction ici car elle est dans catalogue.c
+void ajouter_ligne_visuelle_generique(GtkListBox *lb, const char *c, const char *t, const char *a, const char *alb, int dur, int pl);
+
 void charger_contenu_playlist(const char *n) {
     GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist); while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; }
-    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); char q[512]; sprintf(q, "SELECT m.chemin, m.titre, m.artiste FROM musiques m JOIN compositions c ON m.id=c.musique_id JOIN playlists p ON p.id=c.playlist_id WHERE p.nom='%s';", n);
+    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db);
+    char q[512];
+    // V26 : On récupère aussi album et durée
+    sprintf(q, "SELECT m.chemin, m.titre, m.artiste, m.album, m.duree FROM musiques m JOIN compositions c ON m.id=c.musique_id JOIN playlists p ON p.id=c.playlist_id WHERE p.nom='%s';", n);
     sqlite3_prepare_v2(db, q, -1, &s, 0);
-    while(sqlite3_step(s)==SQLITE_ROW) ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_playlist), (const char*)sqlite3_column_text(s,0), (const char*)sqlite3_column_text(s,1), (const char*)sqlite3_column_text(s,2), 0);
+    while(sqlite3_step(s)==SQLITE_ROW)
+        ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_playlist),
+            (const char*)sqlite3_column_text(s,0),
+            (const char*)sqlite3_column_text(s,1),
+            (const char*)sqlite3_column_text(s,2),
+            (const char*)sqlite3_column_text(s,3),
+            sqlite3_column_int(s,4),
+            0);
     sqlite3_finalize(s); sqlite3_close(db);
 }
 
 void charger_contenu_artiste(const char *nom_artiste) {
     GtkWidget *c = gtk_widget_get_first_child(list_box_contenu_artiste); while(c) { GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_artiste), c); c=x; }
-    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); char q[512]; sprintf(q, "SELECT chemin, titre, artiste FROM musiques WHERE artiste='%s';", nom_artiste);
+    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db);
+    char q[512];
+    sprintf(q, "SELECT chemin, titre, artiste, album, duree FROM musiques WHERE artiste='%s';", nom_artiste);
     sqlite3_prepare_v2(db, q, -1, &s, 0);
-    while(sqlite3_step(s)==SQLITE_ROW) { ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_artiste), (const char*)sqlite3_column_text(s, 0), (const char*)sqlite3_column_text(s, 1), (const char*)sqlite3_column_text(s, 2), 1); }
+    while(sqlite3_step(s)==SQLITE_ROW) {
+        ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_artiste),
+            (const char*)sqlite3_column_text(s, 0),
+            (const char*)sqlite3_column_text(s, 1),
+            (const char*)sqlite3_column_text(s, 2),
+            (const char*)sqlite3_column_text(s, 3),
+            sqlite3_column_int(s, 4),
+            1);
+    }
     sqlite3_finalize(s); sqlite3_close(db);
 }
 

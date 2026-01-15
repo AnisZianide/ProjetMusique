@@ -2,21 +2,34 @@
 #include "base_sqlite.h"
 #include "catalogue.h"
 #include "playlists.h"
+#include "modeles.h"
 #include <gtk/gtk.h>
 
-void recuperer_infos_mp3(const char *chemin, char *t_out, char *a_out, size_t size) {
+void recuperer_infos_mp3(const char *chemin, char *t_out, char *a_out, char *alb_out, int *dur_out, size_t size) {
     int use_filename = 1;
-    // TagLib détecte automatiquement le format (MP3, FLAC, OGG, WAV)
+   
+    snprintf(alb_out, size, "Album Inconnu");
+    *dur_out = 0;
+
     TagLib_File *f = taglib_file_new(chemin);
    
     if(f && taglib_file_is_valid(f)){
+        // CORRECTION ICI : Ajout de 'const' pour éviter le warning
+        const TagLib_AudioProperties *p = taglib_file_audioproperties(f);
+        if (p) {
+            *dur_out = taglib_audioproperties_length(p);
+        }
+
         TagLib_Tag *t = taglib_file_tag(f);
         if(t){
             char *tt = taglib_tag_title(t);
             char *ta = taglib_tag_artist(t);
+            char *tal = taglib_tag_album(t);
+
             if(tt && strlen(tt) > 0 && ta && strlen(ta) > 0) {
                 snprintf(t_out, size, "%s", tt);
                 snprintf(a_out, size, "%s", ta);
+                if(tal && strlen(tal) > 0) snprintf(alb_out, size, "%s", tal);
                 use_filename = 0;
             }
         }
@@ -28,7 +41,6 @@ void recuperer_infos_mp3(const char *chemin, char *t_out, char *a_out, size_t si
         char *dot = strrchr(nom, '.');
         if(dot) *dot='\0';
        
-        // Tentative de découpage "Artiste - Titre" si le tag échoue
         char *sep = strstr(nom, " - ");
         if(sep) {
             *sep = '\0';
@@ -40,7 +52,8 @@ void recuperer_infos_mp3(const char *chemin, char *t_out, char *a_out, size_t si
         }
         g_free(nom);
     }
-    trim(t_out); trim(a_out);
+   
+    trim(t_out); trim(a_out); trim(alb_out);
 }
 
 void on_file_resp(GtkNativeDialog *d, int r, gpointer u) {
@@ -49,15 +62,17 @@ void on_file_resp(GtkNativeDialog *d, int r, gpointer u) {
         GFile *f = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(d));
         char *p = g_file_get_path(f);
         if(p){
-            char t[256], a[256];
-            recuperer_infos_mp3(p,t,a,256);
+            char t[256], a[256], alb[256];
+            int dur = 0;
            
-            if(ajouter_bdd(p,t,a)){
+            recuperer_infos_mp3(p, t, a, alb, &dur, 256);
+           
+            if(ajouter_bdd(p, t, a, alb, dur)){
                 charger_catalogue();
                 charger_listes_annexes();
-                set_status("Importé.", 0);
+                set_status("Importé avec succès !", 0);
             } else {
-                set_status("Doublon ou Erreur.", 1);
+                set_status("Erreur ou Doublon.", 1);
             }
             g_free(p);
         }
@@ -66,15 +81,12 @@ void on_file_resp(GtkNativeDialog *d, int r, gpointer u) {
     g_object_unref(d);
 }
 
-// C'EST ICI QUE CA CHANGE (V24)
 void on_add_clicked(GtkButton *b, gpointer u) {
     (void)b; (void)u;
     GtkFileChooserNative *n = gtk_file_chooser_native_new("Ajouter Musique", GTK_WINDOW(main_window), GTK_FILE_CHOOSER_ACTION_OPEN, "Ouvrir", "Annuler");
    
     GtkFileFilter *f = gtk_file_filter_new();
-    gtk_file_filter_set_name(f, "Fichiers Audio (MP3, WAV, OGG, FLAC)");
-   
-    // On autorise tous les formats demandés par le sujet
+    gtk_file_filter_set_name(f, "Fichiers Audio");
     gtk_file_filter_add_pattern(f, "*.mp3");
     gtk_file_filter_add_pattern(f, "*.wav");
     gtk_file_filter_add_pattern(f, "*.ogg");
