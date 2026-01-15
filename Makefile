@@ -1,12 +1,11 @@
 CC = gcc
 
-# ⚠️ CORRECTION ICI : on utilise 'taglib_c' au lieu de 'taglib'
+# ICI C'EST TRES IMPORTANT : taglib_c
 CFLAGS = -Wall -Wextra -g -std=c99 `pkg-config --cflags gtk4 taglib_c sqlite3`
 
-# ⚠️ CORRECTION ICI AUSSI : 'taglib_c' pour le linkeur
+# ICI AUSSI : taglib_c
 LIBS = `pkg-config --libs gtk4 taglib_c sqlite3` -lm -ldl -lpthread
 
-# Liste des sources
 SRC = src/main.c \
       src/base_sqlite.c \
       src/lecteur.c \
