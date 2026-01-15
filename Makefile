@@ -1,30 +1,31 @@
-# Compilateur
 CC = gcc
-CFLAGS = -Wall -Wextra -g $(shell pkg-config --cflags gtk4)
 
-# C'est ICI qu'on relie la base de données (-lsqlite3)
-LIBS = $(shell pkg-config --libs gtk4) -lsqlite3 -lm -ldl -lpthread -ltag_c
+# ⚠️ CORRECTION ICI : on utilise 'taglib_c' au lieu de 'taglib'
+CFLAGS = -Wall -Wextra -g -std=c99 `pkg-config --cflags gtk4 taglib_c sqlite3`
 
-# Fichiers
-SRC = src/main.c
-TARGET = bin/app_musique
-DATA_DIR = data
+# ⚠️ CORRECTION ICI AUSSI : 'taglib_c' pour le linkeur
+LIBS = `pkg-config --libs gtk4 taglib_c sqlite3` -lm -ldl -lpthread
 
-# Règle par défaut
-all: directories $(TARGET)
+# Liste des sources
+SRC = src/main.c \
+      src/base_sqlite.c \
+      src/lecteur.c \
+      src/karaoke.c \
+      src/importation.c \
+      src/catalogue.c \
+      src/playlists.c \
+      src/modeles.c
 
-# Compilation
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LIBS)
+OBJ = $(SRC:.c=.o)
 
-# Création automatique des dossiers bin et data
-directories:
+all: bin/app_musique
+
+bin/app_musique: $(OBJ)
 	@mkdir -p bin
-	@mkdir -p $(DATA_DIR)
+	$(CC) $(OBJ) -o bin/app_musique $(LIBS)
 
-# Nettoyage
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 clean:
-	rm -f $(TARGET)
-	rm -f $(DATA_DIR)/*.db
-
-.PHONY: all clean directories
+	rm -f src/*.o bin/app_musique
