@@ -1,108 +1,51 @@
 /* --- GLOBAL --- */
 window {
-    background-color: #e3f2fd; /* Bleu très clair (Ciel) */
-    color: #0d47a1; /* Texte en Bleu Foncé (pour être lisible) */
+    background-color: #e3f2fd;
+    color: #0d47a1;
     font-family: "Sans";
 }
 
-/* --- BARRE LATERALE (Sidebar) --- */
+/* --- BARRE LATERALE --- */
 stacksidebar {
-    background-color: #bbdefb; /* Bleu un peu plus soutenu */
+    background-color: #bbdefb;
     border-right: 1px solid #ffffff;
 }
+stacksidebar list { background-color: transparent; }
+stacksidebar row { padding: 10px; color: #1565c0; font-weight: bold; }
+stacksidebar row:selected { background-color: #1976d2; color: #ffffff; border-left: 4px solid #0d47a1; }
 
-stacksidebar list {
-    background-color: transparent;
-}
+/* --- LISTES --- */
+list { background-color: #e3f2fd; }
+row { padding: 8px; border-bottom: 1px solid #bbdefb; transition: 200ms; color: #0d47a1; }
+row:hover { background-color: #bbdefb; }
+row:selected { background-color: #1976d2; color: #ffffff; }
+row:selected button { color: #ffffff; }
 
-stacksidebar row {
-    padding: 10px;
-    color: #1565c0; /* Texte bleu moyen */
-    font-weight: bold;
-}
+/* --- BOUTONS STANDARDS --- */
+button { background-color: transparent; color: #01579b; border: none; padding: 5px; border-radius: 50%; }
+button:hover { background-color: rgba(255, 255, 255, 0.3); color: #000000; }
 
-stacksidebar row:selected {
-    background-color: #1976d2; /* Sélection en Bleu Foncé */
-    color: #ffffff; /* Texte devient Blanc quand sélectionné */
-    border-left: 4px solid #0d47a1;
-}
-
-/* --- LISTES (Catalogue, Playlist) --- */
-list {
-    background-color: #e3f2fd; /* Fond des listes bleu clair */
-}
-
-row {
-    padding: 8px;
-    border-bottom: 1px solid #bbdefb; /* Ligne de séparation subtile */
-    transition: 200ms;
-    color: #0d47a1; /* Texte des musiques en Bleu Foncé */
-}
-
-row:hover {
-    background-color: #bbdefb; /* Survol un peu plus foncé */
-}
-
-/* C'EST ICI QUE CA SE JOUE POUR LA LECTURE */
-row:selected {
-    background-color: #1976d2; /* La ligne sélectionnée devient BLEU FONCÉ */
-    color: #ffffff; /* Le texte devient BLANC */
-}
-
-/* --- BOUTONS (Poubelle, Ajout, Lecture) --- */
-button {
-    background-color: transparent;
-    color: #01579b; /* ICONES EN BLEU FONCÉ (Visible sur fond clair) */
-    border: none;
-    box-shadow: none;
-    padding: 5px;
-    border-radius: 50%;
-}
-
-/* Quand la ligne est sélectionnée (Bleu foncé), le bouton devient Blanc */
-row:selected button {
-    color: #ffffff;
-}
-
-button:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-    color: #000000; /* Devient noir au survol pour bien le voir */
-}
-
-/* Boutons Spéciaux (Importer / Créer) */
+/* --- BOUTONS SPECIAUX (CORRECTION ICI) --- */
 box > button.text-button {
-    background-color: #1976d2; /* Fond bouton bleu foncé */
-    color: #ffffff; /* Texte blanc */
-    border-radius: 20px;
-    padding: 5px 15px;
-    font-weight: bold;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    background-color: #0d47a1; /* Bleu Foncé très visible */
+    color: #ffffff;            /* Texte Blanc */
+    border-radius: 25px;       /* Bien arrondi */
+    padding: 8px 20px;         /* Un peu plus large */
+    font-weight: 900;          /* Texte bien gras */
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3); /* Ombre pour le faire "flotter" */
+    margin-bottom: 10px;
 }
 
 box > button.text-button:hover {
-    background-color: #1565c0;
+    background-color: #1565c0; /* Un peu plus clair quand on passe la souris */
+    transform: scale(1.05);    /* Petit effet de zoom */
+    box-shadow: 0 6px 8px rgba(0,0,0,0.4);
 }
 
 /* --- LECTURE & PAROLES --- */
-frame {
-    border: 2px solid #1976d2;
-    border-radius: 10px;
-}
+frame { border: 2px solid #1976d2; border-radius: 10px; }
+textview { background-color: #ffffff; color: #0d47a1; font-size: 18px; font-weight: bold; }
+text { background-color: #ffffff; }
 
-textview {
-    background-color: #ffffff; /* Fond des paroles blanc (comme une feuille) */
-    color: #0d47a1; /* Paroles en bleu foncé */
-    font-size: 18px;
-    font-weight: bold;
-}
-
-text {
-    background-color: #ffffff;
-}
-
-/* --- BARRE DU BAS (Footer) --- */
-box.footer {
-    background-color: #bbdefb;
-    padding: 10px;
-    border-top: 2px solid #ffffff;
-}
+/* --- FOOTER --- */
+box.footer { background-color: #bbdefb; padding: 10px; border-top: 2px solid #ffffff; }
