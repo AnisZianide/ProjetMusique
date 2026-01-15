@@ -2,10 +2,14 @@
 #include "miniaudio.h"
 #include "lecteur.h"
 #include "karaoke.h"
+#include "base_sqlite.h"
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 ma_engine engine;
 ma_sound sound;
@@ -51,15 +55,38 @@ char* get_chemin_from_row(GtkListBoxRow *r) {
     return (char*)g_object_get_data(G_OBJECT(bt), "mon_chemin");
 }
 
+// VERSION SECURISEE ET FONCTIONNELLE (fork + execvp)
 void charger_pochette_intelligente(const char *chemin) {
     char *ip = get_associated_file(chemin, ".jpg");
     if(!ip) ip = get_associated_file(chemin, ".png");
    
     if(!ip) {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "ffmpeg -i \"%s\" -an -vcodec copy /tmp/pochette_temp.jpg -y > /dev/null 2>&1", chemin);
-        int res = system(cmd);
-        if(res == 0) ip = g_strdup("/tmp/pochette_temp.jpg");
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            // ENFANT
+            FILE *f = freopen("/dev/null", "w", stderr); (void)f;
+            FILE *f2 = freopen("/dev/null", "w", stdout); (void)f2;
+
+            char *args[] = {
+                "ffmpeg", "-i", (char*)chemin, "-an", "-vcodec", "copy",
+                "/tmp/pochette_temp.jpg", "-y", NULL
+            };
+           
+            execvp("ffmpeg", args);
+            exit(1);
+        } else if (pid > 0) {
+            // PARENT
+            int status;
+            waitpid(pid, &status, 0);
+           
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                 if(access("/tmp/pochette_temp.jpg", F_OK) == 0) {
+                     // CORRECTION ICI : g_strdup au lieu de strdup
+                     ip = g_strdup("/tmp/pochette_temp.jpg");
+                 }
+            }
+        }
     }
 
     if(ip){
@@ -83,16 +110,13 @@ void jouer_musique(GtkListBoxRow *r) {
 
     stop_musique();
    
-    // CORRECTION AUDIO : Ajout de MA_SOUND_FLAG_DECODE pour charger en RAM
-    // Cela évite le streaming disque instable (grésillements) et le crash assertion
     if(ma_sound_init_from_file(&engine, c, MA_SOUND_FLAG_DECODE, NULL, NULL, &sound) != MA_SUCCESS){
         set_status("Erreur lecture fichier.", 1);
         return;
     }
    
     ma_sound_start(&sound);
-    is_loaded = 1;
-    is_paused = 0;
+    is_loaded = 1; is_paused = 0;
     start_auto_scroll();
    
     current_row = r;
@@ -103,18 +127,26 @@ void jouer_musique(GtkListBoxRow *r) {
     if(mk) gtk_label_set_markup(GTK_LABEL(lbl_lecture_titre), mk);
     gtk_label_set_markup(GTK_LABEL(lbl_current_title), "Lecture en cours... 🎵");
 
-    // CORRECTION GTK : On récupère proprement le buffer
-    // txt_paroles_buffer est un GtkTextView, on doit demander son buffer
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(txt_paroles_buffer));
+    int id = get_id_musique(c);
+    char *paroles = get_paroles_bdd(id);
    
-    char *pp = get_associated_file(c, ".txt");
-    if(pp){
-        char *cnt = lire_contenu_fichier(pp);
-        gtk_text_buffer_set_text(buf, cnt ? cnt : "(Erreur lecture)", -1);
-        if(cnt) free(cnt);
-        g_free(pp);
+    if(paroles){
+        gtk_text_buffer_set_text(buf, paroles, -1);
+        free(paroles);
     } else {
-        gtk_text_buffer_set_text(buf, "\n(Pas de paroles trouvées.)", -1);
+        char *pp = get_associated_file(c, ".txt");
+        if(pp) {
+             char *cnt = lire_contenu_fichier(pp);
+             if(cnt) {
+                 gtk_text_buffer_set_text(buf, cnt, -1);
+                 set_paroles_bdd(id, cnt);
+                 free(cnt);
+             }
+             g_free(pp);
+        } else {
+            gtk_text_buffer_set_text(buf, "\n(Pas de paroles en BDD.)", -1);
+        }
     }
    
     charger_pochette_intelligente(c);
