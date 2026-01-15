@@ -22,13 +22,17 @@ GtkWidget *list_box_catalogue;
 GtkWidget *list_box_playlists;
 GtkWidget *list_box_contenu_playlist;
 GtkWidget *list_box_artistes;
-GtkWidget *list_box_contenu_artiste; // NOUVEAU V21 : Liste des sons de l'artiste
+GtkWidget *list_box_contenu_artiste;
 GtkWidget *lbl_lecture_titre;
 GtkWidget *lbl_lecture_artiste;
 GtkWidget *lbl_current_title;
 GtkWidget *txt_paroles_buffer;
 GtkWidget *img_pochette;
 GtkWidget *scrolled_window_paroles;
+
+// NOUVEAU V22 : Widgets de Recherche et Tri
+GtkWidget *entry_recherche;
+GtkWidget *dd_tri;
 
 // Audio & Timer
 ma_engine engine;
@@ -66,7 +70,7 @@ void set_status(const char *message, int is_error) {
     g_free(markup);
 }
 
-// --- AUTO-SCROLL (Version Safe) ---
+// --- AUTO-SCROLL ---
 gboolean on_scroll_timer(gpointer user_data) {
     (void)user_data;
     if (!is_loaded || is_paused) return TRUE;
@@ -192,62 +196,46 @@ void on_playlist_select_resp(GtkDialog *d, int r, gpointer u) { int mid=(int)(in
 void on_add_to_pl_clicked(GtkButton *b, gpointer u) { (void)u; char *c=(char*)g_object_get_data(G_OBJECT(b), "mon_chemin"); int m=get_id_musique(c); if(m==-1)return; GtkWidget *d=gtk_dialog_new_with_buttons("Choisir Playlist", GTK_WINDOW(main_window), GTK_DIALOG_MODAL, "Annuler", GTK_RESPONSE_CANCEL, "Ajouter", GTK_RESPONSE_OK, NULL); GtkWidget *ct=gtk_dialog_get_content_area(GTK_DIALOG(d)); const char *a[100]; int k=0; sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); sqlite3_prepare_v2(db, "SELECT nom FROM playlists;", -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW && k<99) a[k++]=g_strdup((const char*)sqlite3_column_text(s, 0)); a[k]=NULL; sqlite3_finalize(s); sqlite3_close(db); if(k==0){ set_status("Aucune playlist !", 1); gtk_window_destroy(GTK_WINDOW(d)); return; } GtkWidget *dd=gtk_drop_down_new_from_strings(a); gtk_widget_set_margin_top(dd,20); gtk_widget_set_margin_bottom(dd,20); gtk_widget_set_margin_start(dd,20); gtk_widget_set_margin_end(dd,20); gtk_box_append(GTK_BOX(ct), dd); g_signal_connect(d, "response", G_CALLBACK(on_playlist_select_resp), (gpointer)(intptr_t)m); gtk_window_present(GTK_WINDOW(d)); }
 void ajouter_ligne_visuelle_generique(GtkListBox *lb, const char *c, const char *t, const char *a, int pl) { GtkWidget *r=gtk_list_box_row_new(); GtkWidget *x=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10); gtk_widget_set_hexpand(x, TRUE); char *txt=g_markup_printf_escaped("<b>%s</b>\n<span size='small' foreground='gray'>%s</span>", t, a); GtkWidget *l=gtk_label_new(NULL); gtk_label_set_markup(GTK_LABEL(l), txt); g_free(txt); gtk_widget_set_hexpand(l, TRUE); gtk_label_set_xalign(GTK_LABEL(l), 0); gtk_label_set_ellipsize(GTK_LABEL(l), PANGO_ELLIPSIZE_END); gtk_box_append(GTK_BOX(x), gtk_image_new_from_icon_name("audio-x-generic")); gtk_box_append(GTK_BOX(x), l); if(pl){ GtkWidget *ba=gtk_button_new_from_icon_name("list-add-symbolic"); g_object_set_data_full(G_OBJECT(ba), "mon_chemin", g_strdup(c), g_free); g_signal_connect(ba, "clicked", G_CALLBACK(on_add_to_pl_clicked), NULL); gtk_box_append(GTK_BOX(x), ba); } GtkWidget *bd=gtk_button_new_from_icon_name("user-trash-symbolic"); g_object_set_data_full(G_OBJECT(bd), "mon_chemin", g_strdup(c), g_free); g_signal_connect(bd, "clicked", G_CALLBACK(on_supprimer_clicked), r); gtk_box_append(GTK_BOX(x), bd); gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), x); gtk_list_box_append(lb, r); }
 
-// RELOADERS
-void charger_catalogue() { GtkWidget *c=gtk_widget_get_first_child(list_box_catalogue); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_catalogue), c); c=n; } sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); sqlite3_prepare_v2(db, "SELECT chemin, titre, artiste FROM musiques;", -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW) ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_catalogue), (const char*)sqlite3_column_text(s,0), (const char*)sqlite3_column_text(s,1), (const char*)sqlite3_column_text(s,2), 1); sqlite3_finalize(s); sqlite3_close(db); }
-void charger_contenu_playlist(const char *n) { GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist); while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; } sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); char q[512]; sprintf(q, "SELECT m.chemin, m.titre, m.artiste FROM musiques m JOIN compositions c ON m.id=c.musique_id JOIN playlists p ON p.id=c.playlist_id WHERE p.nom='%s';", n); sqlite3_prepare_v2(db, q, -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW) ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_playlist), (const char*)sqlite3_column_text(s,0), (const char*)sqlite3_column_text(s,1), (const char*)sqlite3_column_text(s,2), 0); sqlite3_finalize(s); sqlite3_close(db); }
-
-// NOUVEAU V21 : Charger les sons d'un artiste
-void charger_contenu_artiste(const char *nom_artiste) {
-    GtkWidget *c = gtk_widget_get_first_child(list_box_contenu_artiste);
-    while(c) { GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_artiste), c); c=x; }
+// --- CHARGEMENT CATALOGUE AVEC TRI ET RECHERCHE (V22) ---
+void charger_catalogue() {
+    GtkWidget *c=gtk_widget_get_first_child(list_box_catalogue);
+    while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_catalogue), c); c=n; }
    
+    // Récupérer le texte de recherche et le tri
+    const char *recherche = gtk_editable_get_text(GTK_EDITABLE(entry_recherche));
+    int tri_id = gtk_drop_down_get_selected(GTK_DROP_DOWN(dd_tri));
+   
+    // Construire la requête SQL
+    char sql[1024];
+    char *order_by = "id DESC"; // Par défaut : Ajout récent
+    if (tri_id == 1) order_by = "titre ASC"; // A-Z
+    if (tri_id == 2) order_by = "artiste ASC"; // Artiste
+
+    snprintf(sql, sizeof(sql),
+        "SELECT chemin, titre, artiste FROM musiques WHERE (titre LIKE '%%%s%%' OR artiste LIKE '%%%s%%') ORDER BY %s;",
+        recherche ? recherche : "",
+        recherche ? recherche : "",
+        order_by);
+
     sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db);
-    char q[512];
-    sprintf(q, "SELECT chemin, titre, artiste FROM musiques WHERE artiste='%s';", nom_artiste);
-    sqlite3_prepare_v2(db, q, -1, &s, 0);
+    sqlite3_prepare_v2(db, sql, -1, &s, 0);
     while(sqlite3_step(s)==SQLITE_ROW) {
-        ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_artiste),
-            (const char*)sqlite3_column_text(s, 0),
-            (const char*)sqlite3_column_text(s, 1),
-            (const char*)sqlite3_column_text(s, 2), 1); // 1 = On peut ajouter à une playlist
+        ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_catalogue),
+            (const char*)sqlite3_column_text(s,0),
+            (const char*)sqlite3_column_text(s,1),
+            (const char*)sqlite3_column_text(s,2), 1);
     }
     sqlite3_finalize(s); sqlite3_close(db);
 }
 
-// NOUVEAU V21 : Clic sur un artiste
-void on_artiste_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) {
-    (void)b; (void)u;
-    GtkWidget *label = gtk_list_box_row_get_child(r); // Dans la liste artiste, l'enfant direct est le label
-    const char *nom_artiste = gtk_label_get_text(GTK_LABEL(label));
-    charger_contenu_artiste(nom_artiste);
-}
+// Callbacks pour recherche et tri
+void on_search_changed(GtkSearchEntry *e, gpointer u) { (void)e; (void)u; charger_catalogue(); }
+void on_sort_changed(GObject *o, GParamSpec *p, gpointer u) { (void)o; (void)p; (void)u; charger_catalogue(); }
 
-void charger_listes_annexes() {
-    GtkWidget *c;
-    c=gtk_widget_get_first_child(list_box_artistes); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_artistes), c); c=n; }
-    sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); sqlite3_prepare_v2(db, "SELECT DISTINCT artiste FROM musiques ORDER BY artiste;", -1, &s, 0);
-    while(sqlite3_step(s)==SQLITE_ROW){
-        GtkWidget *r=gtk_list_box_row_new();
-        GtkWidget *l=gtk_label_new((const char*)sqlite3_column_text(s,0));
-        gtk_widget_set_margin_start(l,10); gtk_widget_set_margin_top(l,10); gtk_widget_set_margin_bottom(l,10);
-        gtk_widget_set_halign(l, GTK_ALIGN_START);
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), l);
-        gtk_list_box_append(GTK_LIST_BOX(list_box_artistes), r);
-    } sqlite3_finalize(s);
-   
-    c=gtk_widget_get_first_child(list_box_playlists); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_playlists), c); c=n; }
-    sqlite3_prepare_v2(db, "SELECT nom FROM playlists ORDER BY nom;", -1, &s, 0);
-    while(sqlite3_step(s)==SQLITE_ROW){
-        GtkWidget *r=gtk_list_box_row_new();
-        GtkWidget *b=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-        GtkWidget *l=gtk_label_new((const char*)sqlite3_column_text(s,0));
-        gtk_box_append(GTK_BOX(b), gtk_image_new_from_icon_name("folder-music-symbolic"));
-        gtk_box_append(GTK_BOX(b), l);
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), b);
-        gtk_list_box_append(GTK_LIST_BOX(list_box_playlists), r);
-    } sqlite3_finalize(s); sqlite3_close(db);
-}
-
+void charger_contenu_playlist(const char *n) { GtkWidget *c=gtk_widget_get_first_child(list_box_contenu_playlist); while(c){ GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_playlist), c); c=x; } sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); char q[512]; sprintf(q, "SELECT m.chemin, m.titre, m.artiste FROM musiques m JOIN compositions c ON m.id=c.musique_id JOIN playlists p ON p.id=c.playlist_id WHERE p.nom='%s';", n); sqlite3_prepare_v2(db, q, -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW) ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_playlist), (const char*)sqlite3_column_text(s,0), (const char*)sqlite3_column_text(s,1), (const char*)sqlite3_column_text(s,2), 0); sqlite3_finalize(s); sqlite3_close(db); }
+void charger_contenu_artiste(const char *nom_artiste) { GtkWidget *c = gtk_widget_get_first_child(list_box_contenu_artiste); while(c) { GtkWidget *x=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_contenu_artiste), c); c=x; } sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); char q[512]; sprintf(q, "SELECT chemin, titre, artiste FROM musiques WHERE artiste='%s';", nom_artiste); sqlite3_prepare_v2(db, q, -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW) { ajouter_ligne_visuelle_generique(GTK_LIST_BOX(list_box_contenu_artiste), (const char*)sqlite3_column_text(s, 0), (const char*)sqlite3_column_text(s, 1), (const char*)sqlite3_column_text(s, 2), 1); } sqlite3_finalize(s); sqlite3_close(db); }
+void on_artiste_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; GtkWidget *label = gtk_list_box_row_get_child(r); const char *nom_artiste = gtk_label_get_text(GTK_LABEL(label)); charger_contenu_artiste(nom_artiste); }
+void charger_listes_annexes() { GtkWidget *c; c=gtk_widget_get_first_child(list_box_artistes); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_artistes), c); c=n; } sqlite3 *db; sqlite3_stmt *s; sqlite3_open(DB_FILE, &db); sqlite3_prepare_v2(db, "SELECT DISTINCT artiste FROM musiques ORDER BY artiste;", -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW){ GtkWidget *r=gtk_list_box_row_new(); GtkWidget *l=gtk_label_new((const char*)sqlite3_column_text(s,0)); gtk_widget_set_margin_start(l,10); gtk_widget_set_margin_top(l,10); gtk_widget_set_margin_bottom(l,10); gtk_widget_set_halign(l, GTK_ALIGN_START); gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), l); gtk_list_box_append(GTK_LIST_BOX(list_box_artistes), r); } sqlite3_finalize(s); c=gtk_widget_get_first_child(list_box_playlists); while(c){ GtkWidget *n=gtk_widget_get_next_sibling(c); gtk_list_box_remove(GTK_LIST_BOX(list_box_playlists), c); c=n; } sqlite3_prepare_v2(db, "SELECT nom FROM playlists ORDER BY nom;", -1, &s, 0); while(sqlite3_step(s)==SQLITE_ROW){ GtkWidget *r=gtk_list_box_row_new(); GtkWidget *b=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10); GtkWidget *l=gtk_label_new((const char*)sqlite3_column_text(s,0)); gtk_box_append(GTK_BOX(b), gtk_image_new_from_icon_name("folder-music-symbolic")); gtk_box_append(GTK_BOX(b), l); gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(r), b); gtk_list_box_append(GTK_LIST_BOX(list_box_playlists), r); } sqlite3_finalize(s); sqlite3_close(db); }
 void on_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; jouer_musique(r); }
 void on_pl_row_activated(GtkListBox *b, GtkListBoxRow *r, gpointer u) { (void)b; (void)u; GtkWidget *x=gtk_list_box_row_get_child(r); GtkWidget *l=gtk_widget_get_last_child(x); charger_contenu_playlist(gtk_label_get_text(GTK_LABEL(l))); }
 void on_creer_pl_resp(GtkDialog *d, int r, gpointer u) { if(r==GTK_RESPONSE_OK){ const char *t=gtk_editable_get_text(GTK_EDITABLE(u)); if(t&&strlen(t)>0){ ajouter_playlist_bdd(t); charger_listes_annexes(); set_status("Playlist créée !", 0); } } gtk_window_destroy(GTK_WINDOW(d)); }
@@ -258,17 +246,41 @@ void on_add_clicked(GtkButton *b, gpointer u) { (void)b; (void)u; GtkFileChooser
 static void activate(GtkApplication *app, gpointer u) { (void)u;
     ma_engine_init(NULL, &engine); init_db(); load_css();
     main_window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - V21 (Artistes)");
+    gtk_window_set_title(GTK_WINDOW(main_window), "Projet Musique - V22 (Recherche & Tri)");
     gtk_window_set_default_size(GTK_WINDOW(main_window), 950, 700);
     GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0); gtk_window_set_child(GTK_WINDOW(main_window), vb);
     GtkWidget *hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); gtk_widget_set_vexpand(hb, TRUE); gtk_box_append(GTK_BOX(vb), hb);
     stack = gtk_stack_new(); GtkWidget *sb = gtk_stack_sidebar_new(); gtk_stack_sidebar_set_stack(GTK_STACK_SIDEBAR(sb), GTK_STACK(stack));
     gtk_widget_set_size_request(sb, 180, -1); gtk_box_append(GTK_BOX(hb), sb); gtk_widget_set_hexpand(stack, TRUE); gtk_box_append(GTK_BOX(hb), stack);
 
-    // CAT
+    // CAT (MODIFIÉ POUR V22)
     GtkWidget *p1 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    GtkWidget *b_add = gtk_button_new_with_label("📂 Importer MP3"); gtk_widget_add_css_class(b_add, "text-button");
-    g_signal_connect(b_add, "clicked", G_CALLBACK(on_add_clicked), NULL); gtk_box_append(GTK_BOX(p1), b_add);
+   
+    // --- BARRE DE CONTROLE (Recherche + Tri + Bouton) ---
+    GtkWidget *box_ctrl = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+   
+    // Recherche
+    entry_recherche = gtk_search_entry_new();
+    gtk_search_entry_set_key_capture_widget(GTK_SEARCH_ENTRY(entry_recherche), main_window);
+    gtk_widget_set_hexpand(entry_recherche, TRUE);
+    g_signal_connect(entry_recherche, "search-changed", G_CALLBACK(on_search_changed), NULL);
+    gtk_box_append(GTK_BOX(box_ctrl), entry_recherche);
+
+    // Tri
+    const char *options[] = { "🕒 Récent", "🔤 Titre", "🎤 Artiste", NULL };
+    dd_tri = gtk_drop_down_new_from_strings(options);
+    g_signal_connect(dd_tri, "notify::selected", G_CALLBACK(on_sort_changed), NULL);
+    gtk_box_append(GTK_BOX(box_ctrl), dd_tri);
+
+    // Bouton Import
+    GtkWidget *b_add = gtk_button_new_with_label("📂 Importer");
+    gtk_widget_add_css_class(b_add, "text-button");
+    g_signal_connect(b_add, "clicked", G_CALLBACK(on_add_clicked), NULL);
+    gtk_box_append(GTK_BOX(box_ctrl), b_add);
+
+    gtk_box_append(GTK_BOX(p1), box_ctrl);
+    // ----------------------------------------------------
+
     GtkWidget *s1 = gtk_scrolled_window_new(); gtk_widget_set_vexpand(s1, TRUE); list_box_catalogue = gtk_list_box_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s1), list_box_catalogue); gtk_box_append(GTK_BOX(p1), s1); g_signal_connect(list_box_catalogue, "row-activated", G_CALLBACK(on_row_activated), NULL);
     gtk_stack_add_titled(GTK_STACK(stack), p1, "cat", "Catalogue");
 
@@ -276,35 +288,8 @@ static void activate(GtkApplication *app, gpointer u) { (void)u;
     GtkWidget *p2 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); GtkWidget *b_pl = gtk_button_new_with_label("➕ Nouvelle Playlist"); gtk_widget_add_css_class(b_pl, "text-button");
     g_signal_connect(b_pl, "clicked", G_CALLBACK(on_creer_pl_clicked), NULL); gtk_box_append(GTK_BOX(p2), b_pl); GtkWidget *pan = gtk_paned_new(GTK_ORIENTATION_VERTICAL); gtk_widget_set_vexpand(pan, TRUE); gtk_box_append(GTK_BOX(p2), pan); GtkWidget *s2 = gtk_scrolled_window_new(); list_box_playlists = gtk_list_box_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s2), list_box_playlists); gtk_paned_set_start_child(GTK_PANED(pan), s2); gtk_paned_set_resize_start_child(GTK_PANED(pan), TRUE); g_signal_connect(list_box_playlists, "row-activated", G_CALLBACK(on_pl_row_activated), NULL); GtkWidget *vb_pl = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5); gtk_box_append(GTK_BOX(vb_pl), gtk_label_new("Contenu :")); GtkWidget *s3 = gtk_scrolled_window_new(); list_box_contenu_playlist = gtk_list_box_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s3), list_box_contenu_playlist); gtk_widget_set_vexpand(s3, TRUE); gtk_box_append(GTK_BOX(vb_pl), s3); g_signal_connect(list_box_contenu_playlist, "row-activated", G_CALLBACK(on_row_activated), NULL); gtk_paned_set_end_child(GTK_PANED(pan), vb_pl); gtk_paned_set_resize_end_child(GTK_PANED(pan), TRUE); gtk_stack_add_titled(GTK_STACK(stack), p2, "pl", "Playlists");
 
-    // ART (MODIFIÉ POUR V21)
-    GtkWidget *p3 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    // On met un Paned (Diviseur)
-    GtkWidget *pan_art = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    gtk_widget_set_vexpand(pan_art, TRUE);
-    gtk_box_append(GTK_BOX(p3), pan_art);
-   
-    // Haut : Liste des artistes
-    GtkWidget *s4 = gtk_scrolled_window_new();
-    list_box_artistes = gtk_list_box_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s4), list_box_artistes);
-    gtk_paned_set_start_child(GTK_PANED(pan_art), s4);
-    gtk_paned_set_resize_start_child(GTK_PANED(pan_art), TRUE);
-    g_signal_connect(list_box_artistes, "row-activated", G_CALLBACK(on_artiste_row_activated), NULL);
-
-    // Bas : Contenu de l'artiste
-    GtkWidget *box_bas_art = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_box_append(GTK_BOX(box_bas_art), gtk_label_new("Titres de cet artiste :"));
-    GtkWidget *s5 = gtk_scrolled_window_new();
-    list_box_contenu_artiste = gtk_list_box_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s5), list_box_contenu_artiste);
-    gtk_widget_set_vexpand(s5, TRUE);
-    gtk_box_append(GTK_BOX(box_bas_art), s5);
-    g_signal_connect(list_box_contenu_artiste, "row-activated", G_CALLBACK(on_row_activated), NULL);
-
-    gtk_paned_set_end_child(GTK_PANED(pan_art), box_bas_art);
-    gtk_paned_set_resize_end_child(GTK_PANED(pan_art), TRUE);
-
-    gtk_stack_add_titled(GTK_STACK(stack), p3, "art", "Artistes");
+    // ART
+    GtkWidget *p3 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); GtkWidget *pan_art = gtk_paned_new(GTK_ORIENTATION_VERTICAL); gtk_widget_set_vexpand(pan_art, TRUE); gtk_box_append(GTK_BOX(p3), pan_art); GtkWidget *s4 = gtk_scrolled_window_new(); list_box_artistes = gtk_list_box_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s4), list_box_artistes); gtk_paned_set_start_child(GTK_PANED(pan_art), s4); gtk_paned_set_resize_start_child(GTK_PANED(pan_art), TRUE); g_signal_connect(list_box_artistes, "row-activated", G_CALLBACK(on_artiste_row_activated), NULL); GtkWidget *box_bas_art = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5); gtk_box_append(GTK_BOX(box_bas_art), gtk_label_new("Titres de cet artiste :")); GtkWidget *s5 = gtk_scrolled_window_new(); list_box_contenu_artiste = gtk_list_box_new(); gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(s5), list_box_contenu_artiste); gtk_widget_set_vexpand(s5, TRUE); gtk_box_append(GTK_BOX(box_bas_art), s5); g_signal_connect(list_box_contenu_artiste, "row-activated", G_CALLBACK(on_row_activated), NULL); gtk_paned_set_end_child(GTK_PANED(pan_art), box_bas_art); gtk_paned_set_resize_end_child(GTK_PANED(pan_art), TRUE); gtk_stack_add_titled(GTK_STACK(stack), p3, "art", "Artistes");
 
     // LECTURE
     GtkWidget *p4 = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); gtk_widget_set_halign(p4, GTK_ALIGN_CENTER);
@@ -325,4 +310,4 @@ static void activate(GtkApplication *app, gpointer u) { (void)u;
     charger_catalogue(); charger_listes_annexes(); gtk_window_present(GTK_WINDOW(main_window));
 }
 
-int main(int c, char **v) { GtkApplication *a = gtk_application_new("com.projet.v21", G_APPLICATION_DEFAULT_FLAGS); g_signal_connect(a, "activate", G_CALLBACK(activate), NULL); int s = g_application_run(G_APPLICATION(a), c, v); ma_engine_uninit(&engine); g_object_unref(a); return s; }
+int main(int c, char **v) { GtkApplication *a = gtk_application_new("com.projet.v22", G_APPLICATION_DEFAULT_FLAGS); g_signal_connect(a, "activate", G_CALLBACK(activate), NULL); int s = g_application_run(G_APPLICATION(a), c, v); ma_engine_uninit(&engine); g_object_unref(a); return s; }
